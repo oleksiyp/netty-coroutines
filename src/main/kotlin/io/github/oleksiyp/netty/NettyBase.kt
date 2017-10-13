@@ -7,6 +7,7 @@ import io.netty.util.ReferenceCountUtil
 import kotlinx.coroutines.experimental.CoroutineDispatcher
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.runBlocking
+import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 
 abstract class NettyBase {
     protected abstract val coroutineContext: CoroutineDispatcher
@@ -27,23 +28,16 @@ abstract class NettyBase {
                 }
             }
 
-            val sendJob = launch {
-                while (isActive) {
-                    val byteBuf = internal.sendChannel.receive()
-                    ch.writeAndFlush(byteBuf)
-                }
-            }
+            internal.write = { ch.writeAndFlush(it) }
 
             try {
                 if (requestHandler == null) {
-                    sendJob.join()
+                    suspendCancellableCoroutine<Unit> {  }
                 } else {
                     handlerCtx.requestHandler()
                 }
             } finally {
                 internal.cancel()
-                sendJob.cancel()
-                sendJob.join()
                 ch.close()
             }
         }

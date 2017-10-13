@@ -1,13 +1,13 @@
 package io.github.oleksiyp.netty
 
+import io.netty.channel.ChannelFuture
 import io.netty.channel.ChannelHandlerContext
 import io.netty.util.AttributeKey
 import io.netty.util.ReferenceCountUtil
-import kotlinx.coroutines.experimental.CancellableContinuation
-import kotlinx.coroutines.experimental.Job
+import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.channels.Channel
-import kotlinx.coroutines.experimental.channels.RendezvousChannel
-import kotlinx.coroutines.experimental.suspendCancellableCoroutine
+import kotlinx.coroutines.experimental.channels.LinkedListChannel
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class CoroutineHandler<I>(internal val internal: Internal<I>) {
@@ -26,7 +26,7 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
     }
 
     suspend fun send(obj: Any) {
-        internal.reply(obj)
+        internal.send(obj)
     }
 
     class Internal<I> {
@@ -34,30 +34,33 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
         lateinit var isWriteable: () -> Boolean
         lateinit var job: Job
         lateinit var readabilityChanged : (Boolean) -> Unit
+        lateinit var write: (msg: Any) -> ChannelFuture
 
         val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
 
-        var receiveChannel = Channel<I>(Channel.UNLIMITED)
-        var sendChannel = RendezvousChannel<Any>()
+        val chSize = AtomicInteger()
+        var receiveChannel = LinkedListChannel<I>()
 
         fun dataReceived(msg: I) {
-            val empty = receiveChannel.isEmpty
-            readabilityChanged(empty)
+            chSize.incrementAndGet()
             receiveChannel.offer(msg)
         }
 
-        suspend fun reply(obj: Any) {
-            if (isWriteable()) {
-                sendChannel.send(obj)
-            } else {
+        suspend fun send(msg: Any) {
+            if (!isWriteable()) {
                 println("SUSPEND")
                 suspendCancellableCoroutine<Unit> { cont ->
                     writeContinuation.getAndSet(cont)?.resume(Unit)
                 }
-                println("RESUMED")
-                sendChannel.send(obj)
             }
 
+            suspendCancellableCoroutine<Unit> { cont ->
+                val future = write(msg)
+                cont.cancelFutureOnCompletion(future)
+                future.addListener {
+                    cont.resume(Unit)
+                }
+            }
         }
 
 
@@ -76,9 +79,10 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
 
         suspend fun receive(): I {
             val data = receiveChannel.receive()
-            readabilityChanged(receiveChannel.isEmpty)
+            println(chSize.decrementAndGet())
             return data
         }
+
 
     }
 
