@@ -4,6 +4,8 @@ import io.netty.bootstrap.Bootstrap
 import io.netty.channel.*
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioSocketChannel
+import io.netty.handler.logging.LogLevel
+import io.netty.handler.logging.LoggingHandler
 import io.netty.util.ReferenceCountUtil
 import kotlinx.coroutines.experimental.*
 
@@ -26,12 +28,15 @@ class Client<I>() {
             override fun initChannel(ch: Channel) {
                 val pipeline = ch.pipeline()
 
+                pipeline.addLast(LoggingHandler(LogLevel.INFO))
+
                 val internal = HandlerContext.Internal<I>()
                 val handlerCtx = HandlerContext(internal)
 
                 val job = launch(coroutineContext) {
                     internal.isActive = this::isActive
                     internal.isWriteable = { ch.isWritable() }
+                    internal.init(System.out::println)
 
                     while (isActive) {
                         val byteBuf = internal.sendChannel.receive()
@@ -48,8 +53,13 @@ class Client<I>() {
 
                     override fun channelRead0(ctx: ChannelHandlerContext, msg: I) {
                         ReferenceCountUtil.retain(msg)
-                        runBlocking {
-                            ctx.handlerContext<I>()?.internal?.receiveChannel?.send(msg)
+                        ctx.handlerContext<I>()?.let {
+                            val continueRead = it.internal.dataReceived(msg)
+                            println("C: $continueRead")
+                            val chCfg = ctx.channel().config()
+                            if (chCfg.isAutoRead != continueRead) {
+                                chCfg.setAutoRead(continueRead)
+                            }
                         }
                     }
 

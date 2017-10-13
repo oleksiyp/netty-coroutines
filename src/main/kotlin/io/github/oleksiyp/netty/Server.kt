@@ -7,7 +7,10 @@ import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.logging.LogLevel
 import io.netty.handler.logging.LoggingHandler
 import io.netty.util.ReferenceCountUtil
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.experimental.asCoroutineDispatcher
+import kotlinx.coroutines.experimental.launch
+import kotlinx.coroutines.experimental.runBlocking
+import java.util.*
 
 class Server(val port: Int,
              private val pipelineBuilder: PipelineBuilderScope.(server: Server) -> Unit) {
@@ -33,7 +36,7 @@ class Server(val port: Int,
 
 
     inner class PipelineBuilderScope(val pipeline: ChannelPipeline) {
-        fun <I>ChannelPipeline.addHandler(requestHandler: suspend HandlerContext<I>.() -> Unit) {
+        fun <I> ChannelPipeline.addHandler(requestHandler: suspend HandlerContext<I>.() -> Unit) {
             addLast(object : SimpleChannelInboundHandler<I>() {
 
                 override fun channelActive(ctx: ChannelHandlerContext) {
@@ -44,6 +47,7 @@ class Server(val port: Int,
                     val job = launch(coroutineContext) {
                         internal.isActive = this::isActive
                         internal.isWriteable = channel::isWritable
+                        internal.init(System.out::println)
 
                         val sendJob = launch {
                             while (isActive) {
@@ -66,18 +70,17 @@ class Server(val port: Int,
                     channel.attr(HandlerContext.ATTRIBUTE).set(handlerCtx)
                 }
 
+                val readQ: Queue<I> = LinkedList<I>()
+
                 override fun channelRead0(ctx: ChannelHandlerContext, msg: I) {
                     ReferenceCountUtil.retain(msg)
-                    runBlocking {
-                        val readJob = launch {
-                            ctx.handlerContext<I>()?.internal?.receiveChannel?.send(msg)
-                        }
-                        ctx.handlerContext<I>().internal.readJob = readJob
-                        readJob.join()
-                        ctx.handlerContext<I>().internal.readJob = null
+
+                    ctx.handlerContext<I>()?.let {
+                        val continueRead = it.internal.dataReceived(msg)
+                        println("S: $continueRead")
+                        ctx.channel().config().setAutoRead(continueRead)
                     }
                 }
-
 
                 override fun channelWritabilityChanged(ctx: ChannelHandlerContext) {
                     if (ctx.channel().isWritable) {

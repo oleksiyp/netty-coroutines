@@ -1,6 +1,8 @@
 package io.github.oleksiyp.netty
 
 import io.github.oleksiyp.json.JsonContext
+import io.github.oleksiyp.netty.HttpServer.HttpHandlerContext
+import io.github.oleksiyp.netty.HttpServer.RequestHttpHandlerContext
 import io.netty.bootstrap.ServerBootstrap
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
@@ -14,16 +16,9 @@ import io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND
 import io.netty.handler.codec.http.HttpResponseStatus.OK
 import io.netty.handler.codec.http.HttpVersion.HTTP_1_1
 import io.netty.handler.codec.http.websocketx.*
-import io.netty.handler.logging.LogLevel
-import io.netty.handler.logging.LoggingHandler
 import io.netty.util.AttributeKey
 import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.nio.aRead
-import java.nio.ByteBuffer.allocate
-import java.nio.channels.AsynchronousFileChannel
 import java.nio.charset.Charset
-import java.nio.file.Paths
-import java.nio.file.StandardOpenOption
 import java.util.concurrent.atomic.AtomicReference
 import java.util.regex.Matcher
 import java.util.regex.Pattern
@@ -50,7 +45,6 @@ class HttpServer(port: Int = 80,
         bootstrap.childHandler(object : ChannelInitializer<Channel>() {
             override fun initChannel(ch: Channel) {
                 val pipeline = ch.pipeline()
-                pipeline.addLast(LoggingHandler(LogLevel.INFO))
                 pipeline.addLast(HttpRequestDecoder())
                 pipeline.addLast(HttpObjectAggregator(512 * 1024))
                 pipeline.addLast(HttpResponseEncoder())
@@ -102,7 +96,7 @@ class HttpServer(port: Int = 80,
             addLast(object : ChannelDuplexHandler() {
                 override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
                     runBlocking {
-                        val internal = HttpHandlerContextInt()
+                        val internal = HttpHandlerContext.Internal()
                         internal.isActive = this::isActive
                         internal.isWriteable = ctx.channel()::isWritable
                         internal.write = { ctx.writeAndFlush(it) }
@@ -116,7 +110,7 @@ class HttpServer(port: Int = 80,
         fun ChannelPipeline.addHttpHandler(requestHandler: suspend RequestHttpHandlerContext.() -> Unit) {
             addLast(object : SimpleChannelInboundHandler<HttpRequest>() {
                 override fun channelRead0(ctx: ChannelHandlerContext, request: HttpRequest) {
-                    val internal = HttpHandlerContextInt()
+                    val internal = HttpHandlerContext.Internal()
                     val httpCtx = RequestHttpHandlerContext(request, internal)
                     val channel = ctx.channel()
 
@@ -159,45 +153,11 @@ class HttpServer(port: Int = 80,
         }
     }
 
-    class HttpHandlerContextInt {
-        lateinit var isActive: () -> Boolean
-        lateinit var isWriteable: () -> Boolean
-        lateinit var write: (obj: HttpObject) -> Unit
-
-
-        suspend fun replyFunc(obj: HttpObject) {
-            if (isWriteable()) {
-                write(obj)
-            } else {
-                suspendCancellableCoroutine<Unit> { cont ->
-                    writeContinuation.getAndSet(cont)?.resume(Unit)
-                }
-                write(obj)
-            }
-
-        }
-
-        val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
-        lateinit var job: Job
-
-        fun resumeWrite() {
-            val cont = writeContinuation.getAndSet(null)
-            if (cont != null) {
-                cont.resume(Unit)
-            }
-        }
-
-        suspend fun cancel() {
-            job.cancel()
-            job.join()
-        }
-    }
-
     class ErrorHttpHandlerContext(val cause: Throwable,
-                                  internal: HttpHandlerContextInt) : HttpHandlerContext(internal)
+                                  internal: Internal) : HttpHandlerContext(internal)
 
     class RequestHttpHandlerContext(val request: HttpRequest,
-                                    internal: HttpHandlerContextInt) : HttpHandlerContext(internal) {
+                                    internal: Internal) : HttpHandlerContext(internal) {
 
         val params by lazy { QueryStringDecoder(request.uri()) }
 
@@ -207,7 +167,7 @@ class HttpServer(port: Int = 80,
     }
 
 
-    abstract class HttpHandlerContext(internal val internal: HttpHandlerContextInt) {
+    abstract class HttpHandlerContext(internal val internal: Internal) {
 
         private var done = false
         private var responded = false
@@ -279,6 +239,40 @@ class HttpServer(port: Int = 80,
             }
         }
 
+        class Internal {
+            lateinit var isActive: () -> Boolean
+            lateinit var isWriteable: () -> Boolean
+            lateinit var write: (obj: HttpObject) -> Unit
+
+
+            suspend fun replyFunc(obj: HttpObject) {
+                if (isWriteable()) {
+                    write(obj)
+                } else {
+                    suspendCancellableCoroutine<Unit> { cont ->
+                        writeContinuation.getAndSet(cont)?.resume(Unit)
+                    }
+                    write(obj)
+                }
+
+            }
+
+            val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
+            lateinit var job: Job
+
+            fun resumeWrite() {
+                val cont = writeContinuation.getAndSet(null)
+                if (cont != null) {
+                    cont.resume(Unit)
+                }
+            }
+
+            suspend fun cancel() {
+                job.cancel()
+                job.join()
+            }
+        }
+
     }
 
     class WebSocketHandlerContext(val request: WebSocketFrame,
@@ -311,10 +305,10 @@ class RouteContext(private val matcher: Matcher) {
     }
 }
 
-suspend fun HttpServer.RequestHttpHandlerContext.route(regexp: String,
-                                                                                method: HttpMethod? = null,
-                                                                                methods: MutableList<HttpMethod> = mutableListOf(HttpMethod.GET),
-                                                                                block: suspend RouteContext.() -> Unit) {
+suspend fun RequestHttpHandlerContext.route(regexp: String,
+                                            method: HttpMethod? = null,
+                                            methods: MutableList<HttpMethod> = mutableListOf(HttpMethod.GET),
+                                            block: suspend RouteContext.() -> Unit) {
     val matcher = Pattern.compile(regexp).matcher(params.path())
     if (method != null) {
         methods += method
@@ -325,7 +319,7 @@ suspend fun HttpServer.RequestHttpHandlerContext.route(regexp: String,
 }
 
 
-suspend fun HttpServer.HttpHandlerContext.staticResourcesHandler(path: String, resourcesBase: String) {
+suspend fun HttpHandlerContext.staticResourcesHandler(path: String, resourcesBase: String) {
     val resource = this.javaClass.classLoader.getResource(resourcesBase + "/" + path)
     if (resource == null) {
         response(DefaultFullHttpResponse(HTTP_1_1, NOT_FOUND))

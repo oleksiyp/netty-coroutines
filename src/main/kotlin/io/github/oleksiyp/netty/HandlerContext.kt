@@ -5,7 +5,10 @@ import io.netty.util.AttributeKey
 import io.netty.util.ReferenceCountUtil
 import kotlinx.coroutines.experimental.CancellableContinuation
 import kotlinx.coroutines.experimental.Job
+import kotlinx.coroutines.experimental.channels.Channel
 import kotlinx.coroutines.experimental.channels.RendezvousChannel
+import kotlinx.coroutines.experimental.launch
+import kotlinx.coroutines.experimental.selects.select
 import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicReference
 
@@ -33,21 +36,34 @@ class HandlerContext<I>(internal val internal: Internal<I>) {
         lateinit var isWriteable: () -> Boolean
         lateinit var job: Job
 
-        @Volatile
-        var readJob: Job? = null
-
         val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
 
-        var receiveChannel = RendezvousChannel<I>()
+        var receiveChannel = Channel<I>(Channel.UNLIMITED)
         var sendChannel = RendezvousChannel<Any>()
+
+        suspend fun init(readabilityChanged : (Boolean) -> Unit ) {
+            select<Unit> {
+                receiveChannel.onReceive {
+                    readabilityChanged?.invoke(receiveChannel.isEmpty)
+                }
+            }
+        }
+
+        fun dataReceived(msg: I) : Boolean {
+            val empty = receiveChannel.isEmpty
+            receiveChannel.offer(msg)
+            return empty
+        }
 
         suspend fun reply(obj: Any) {
             if (isWriteable()) {
                 sendChannel.send(obj)
             } else {
+                println("SUSPEND")
                 suspendCancellableCoroutine<Unit> { cont ->
                     writeContinuation.getAndSet(cont)?.resume(Unit)
                 }
+                println("RESUMED")
                 sendChannel.send(obj)
             }
 
@@ -55,6 +71,7 @@ class HandlerContext<I>(internal val internal: Internal<I>) {
 
 
         fun resumeWrite() {
+            println("RESUME")
             val cont = writeContinuation.getAndSet(null)
             if (cont != null) {
                 cont.resume(Unit)
@@ -63,7 +80,6 @@ class HandlerContext<I>(internal val internal: Internal<I>) {
 
 
         suspend fun cancel() {
-            readJob?.let { it.cancel() }
             job.cancel()
         }
 
