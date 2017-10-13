@@ -2,17 +2,32 @@ package io.github.oleksiyp.proxy
 
 import io.github.oleksiyp.netty.*
 import io.netty.buffer.ByteBuf
+import kotlinx.coroutines.experimental.cancelAndJoin
+import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
 import java.io.IOException
+import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 
 class ProxyConnection(val listenPort: Int,
                       val connectHost: String,
                       val connectPort: Int) {
 
-    private fun pumpJob(input: CoroutineHandler<*>, output: CoroutineHandler<*>) = launch {
+
+    private fun pumpJob(input: CoroutineHandler<ByteBuf>, output: CoroutineHandler<*>, counter: AtomicInteger) = launch {
         while (isActive) {
-            output.send(input.receive()!!)
+            val buf = input.receive()
+            val bufSz = buf.writerIndex() - buf.readerIndex()
+            counter.addAndGet(bufSz)
+            output.send(buf)
         }
+    }
+
+    val log = StringBuffer()
+
+    fun log(msg: String) {
+        log.append(Date()).append(": ").append(msg).append("\n")
+        println(msg)
     }
 
     val client = NettyClient()
@@ -25,14 +40,51 @@ class ProxyConnection(val listenPort: Int,
                 return@addCoroutineHandler
             }
 
-            val c2s = pumpJob(clientCtx, this)
-            val s2c = pumpJob(this, clientCtx)
+            val c2sTransferred = AtomicInteger()
+            val s2cTransferred = AtomicInteger()
+
+            val transferredLogger = transferredLoggingJob(c2sTransferred, s2cTransferred, 1000)
+
+
+            val c2s = pumpJob(clientCtx, this, c2sTransferred)
+            val s2c = pumpJob(this, clientCtx, s2cTransferred)
 
             listOf(s2c, c2s).mutualClose()
             listOf(clientCtx, this).mutualCloseJobs()
 
             s2c.join()
             c2s.join()
+
+            transferredLogger.cancelAndJoin()
+        }
+    }
+
+    private suspend fun transferredLoggingJob(inbound: AtomicInteger,
+                                              outbound: AtomicInteger,
+                                              delay: Long) = launch {
+
+        class TransferredDiff {
+            var transferred = 0
+
+            fun update(newVal: Int) =
+                    if (newVal > transferred) {
+                        transferred = newVal
+                        true
+                    } else {
+                        false
+                    }
+
+        }
+
+        val inboundTransferred = TransferredDiff()
+        val outboundTransferred = TransferredDiff()
+
+        while (isActive) {
+            delay(delay)
+            if (inboundTransferred.update(inbound.get())
+                    || outboundTransferred.update(outbound.get())) {
+                log("Transferred inbound: ${inboundTransferred.transferred} outbound: ${outboundTransferred.transferred}")
+            }
         }
     }
 
