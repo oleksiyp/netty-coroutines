@@ -23,7 +23,7 @@ abstract class NettyBase {
             internal.readabilityChanged = {
                 val chCfg = ch.config()
                 if (chCfg.isAutoRead != it) {
-                    chCfg.setAutoRead(it)
+                    chCfg.isAutoRead = it
                 }
             }
 

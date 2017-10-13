@@ -1,6 +1,5 @@
 package io.github.oleksiyp.netty
 
-import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelFuture
 import io.netty.channel.ChannelHandlerContext
 import io.netty.util.AttributeKey
@@ -40,13 +39,40 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
         lateinit var readabilityChanged : (Boolean) -> Unit
         lateinit var write: (msg: Any) -> ChannelFuture
 
+        val readabilityBarrier = ReadabilityBarrier(10)
+
         val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
 
-        val chSize = AtomicInteger()
         var receiveChannel = LinkedListChannel<I>()
 
         fun dataReceived(msg: I) {
+            readabilityBarrier.changeReadability(receiveChannel.isEmpty)
             receiveChannel.offer(msg)
+        }
+
+        suspend fun receive(): I {
+            val data = receiveChannel.poll()
+            if (data == null) {
+                readabilityBarrier.changeReadability(true)
+                return receiveChannel.receive()
+            }
+            readabilityBarrier.changeReadability(receiveChannel.isEmpty)
+            return data
+        }
+
+        inner class ReadabilityBarrier(val threshold: Int) {
+            private var nNonReadable = 0
+            public fun changeReadability(readability: Boolean) {
+                if (readability) {
+                    readabilityChanged(true)
+                    nNonReadable = 0
+                } else {
+                    nNonReadable++
+                    if (nNonReadable > threshold) {
+                        readabilityChanged(false)
+                    }
+                }
+            }
         }
 
         suspend fun send(msg: Any) {
@@ -83,12 +109,6 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
 
         suspend fun cancel() {
             job.cancel()
-        }
-
-        suspend fun receive(): I {
-            val data = receiveChannel.receive()
-            readabilityChanged(receiveChannel.isEmpty)
-            return data
         }
 
 
