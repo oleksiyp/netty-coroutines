@@ -21,7 +21,6 @@ abstract class NettyBase {
             internal.isActive = this::isActive
             internal.isWriteable = ch::isWritable
             internal.readabilityChanged = {
-                System.out.println("READABILITY: " + this@NettyBase + " " + it)
                 val chCfg = ch.config()
                 if (chCfg.isAutoRead != it) {
                     chCfg.setAutoRead(it)
@@ -32,7 +31,7 @@ abstract class NettyBase {
 
             try {
                 if (requestHandler == null) {
-                    suspendCancellableCoroutine<Unit> {  }
+                    suspendCancellableCoroutine<Unit> { }
                 } else {
                     handlerCtx.requestHandler()
                 }

@@ -1,12 +1,16 @@
 package io.github.oleksiyp.netty
 
+import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelFuture
 import io.netty.channel.ChannelHandlerContext
 import io.netty.util.AttributeKey
 import io.netty.util.ReferenceCountUtil
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.channels.Channel
+import kotlinx.coroutines.experimental.CancellableContinuation
+import kotlinx.coroutines.experimental.Job
+import kotlinx.coroutines.experimental.cancelFutureOnCompletion
 import kotlinx.coroutines.experimental.channels.LinkedListChannel
+import kotlinx.coroutines.experimental.suspendCancellableCoroutine
+import java.nio.channels.ClosedChannelException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -42,13 +46,11 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
         var receiveChannel = LinkedListChannel<I>()
 
         fun dataReceived(msg: I) {
-            chSize.incrementAndGet()
             receiveChannel.offer(msg)
         }
 
         suspend fun send(msg: Any) {
             if (!isWriteable()) {
-                println("SUSPEND")
                 suspendCancellableCoroutine<Unit> { cont ->
                     writeContinuation.getAndSet(cont)?.resume(Unit)
                 }
@@ -58,14 +60,20 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
                 val future = write(msg)
                 cont.cancelFutureOnCompletion(future)
                 future.addListener {
-                    cont.resume(Unit)
+                    if (future.isSuccess) {
+                        cont.resume(Unit)
+                    } else if (future.cause() is ClosedChannelException) {
+                        job.cancel()
+                        cont.resume(Unit)
+                    } else {
+                        cont.resumeWithException(future.cause())
+                    }
                 }
             }
         }
 
 
         fun resumeWrite() {
-            println("RESUME")
             val cont = writeContinuation.getAndSet(null)
             if (cont != null) {
                 cont.resume(Unit)
@@ -79,7 +87,7 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
 
         suspend fun receive(): I {
             val data = receiveChannel.receive()
-            println(chSize.decrementAndGet())
+            readabilityChanged(receiveChannel.isEmpty)
             return data
         }
 
