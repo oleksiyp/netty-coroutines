@@ -7,16 +7,14 @@ import kotlinx.coroutines.experimental.CancellableContinuation
 import kotlinx.coroutines.experimental.Job
 import kotlinx.coroutines.experimental.channels.Channel
 import kotlinx.coroutines.experimental.channels.RendezvousChannel
-import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.selects.select
 import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicReference
 
-class HandlerContext<I>(internal val internal: Internal<I>) {
+class CoroutineHandler<I>(internal val internal: Internal<I>) {
     val isActive
         get() = internal.isActive()
 
-    suspend fun receive() : I = internal.receiveChannel.receive()
+    suspend fun receive() : I = internal.receive()
 
     suspend fun receive(block: suspend (I) -> Unit) {
         val msg = receive()
@@ -35,24 +33,17 @@ class HandlerContext<I>(internal val internal: Internal<I>) {
         lateinit var isActive: () -> Boolean
         lateinit var isWriteable: () -> Boolean
         lateinit var job: Job
+        lateinit var readabilityChanged : (Boolean) -> Unit
 
         val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
 
         var receiveChannel = Channel<I>(Channel.UNLIMITED)
         var sendChannel = RendezvousChannel<Any>()
 
-        suspend fun init(readabilityChanged : (Boolean) -> Unit ) {
-            select<Unit> {
-                receiveChannel.onReceive {
-                    readabilityChanged?.invoke(receiveChannel.isEmpty)
-                }
-            }
-        }
-
-        fun dataReceived(msg: I) : Boolean {
-            val empty = receiveChannel.isEmpty
+        fun dataReceived(msg: I) {
+            val empty = b()
+            readabilityChanged(empty)
             receiveChannel.offer(msg)
-            return empty
         }
 
         suspend fun reply(obj: Any) {
@@ -83,18 +74,36 @@ class HandlerContext<I>(internal val internal: Internal<I>) {
             job.cancel()
         }
 
+        suspend fun receive(): I {
+            val data = receiveChannel.receive()
+            readabilityChanged(receiveChannel.isEmpty)
+            return data
+        }
+
+        private fun b(): Boolean {
+            val empty = receiveChannel.isEmpty
+            return empty
+        }
+
     }
 
     companion object {
-        val ATTRIBUTE = AttributeKey.newInstance<HandlerContext<*>>("HANDLER_CONTEXT")
+        val ATTRIBUTE = AttributeKey.newInstance<CoroutineHandler<*>>("HANDLER_CONTEXT")
 
-        fun <T>attribute() = ATTRIBUTE as AttributeKey<HandlerContext<T>>
+        fun <T>attribute() = ATTRIBUTE as AttributeKey<CoroutineHandler<T>>
     }
 
 
 }
 
-fun <I> ChannelHandlerContext.handlerContext() = channel().attr(HandlerContext.attribute<I>()).get()
+fun <I> ChannelHandlerContext.coroutineHandler() =
+        channel().attr(CoroutineHandler.attribute<I>()).get()
+
+fun <I> ChannelHandlerContext.setCoroutineHandler(handlerCtx: CoroutineHandler<I>?) =
+        channel().attr(CoroutineHandler.attribute<I>()).set(handlerCtx)
+
+fun <I> io.netty.channel.Channel.setCoroutineHandler(handlerCtx: CoroutineHandler<I>) =
+        attr(CoroutineHandler.attribute<I>()).set(handlerCtx)
 
 suspend fun List<Job>.mutualClose() {
     forEach {
@@ -105,6 +114,6 @@ suspend fun List<Job>.mutualClose() {
 }
 
 
-suspend fun List<HandlerContext<*>>.mutualCloseJobs() {
+suspend fun List<CoroutineHandler<*>>.mutualCloseJobs() {
     map { it.internal.job }.mutualClose()
 }

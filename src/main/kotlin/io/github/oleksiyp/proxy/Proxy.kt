@@ -55,6 +55,8 @@ class Proxy {
                 response("Error: " + cause.message!!, status = HttpResponseStatus.BAD_REQUEST)
             }
         }
+
+        listen(5556, "localhost", 22)
     }
 
     private fun listen(listenPort: Int,

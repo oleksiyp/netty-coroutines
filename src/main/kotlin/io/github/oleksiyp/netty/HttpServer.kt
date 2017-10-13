@@ -1,6 +1,6 @@
 package io.github.oleksiyp.netty
 
-import io.github.oleksiyp.json.JsonContext
+import io.github.oleksiyp.json.JsonScope
 import io.github.oleksiyp.netty.HttpServer.HttpHandlerContext
 import io.github.oleksiyp.netty.HttpServer.RequestHttpHandlerContext
 import io.netty.bootstrap.ServerBootstrap
@@ -206,9 +206,9 @@ class HttpServer(port: Int = 80,
             response(response)
         }
 
-        suspend fun jsonResponse(block: JsonContext.() -> Unit) {
+        suspend fun jsonResponse(block: JsonScope.() -> Unit) {
             val str = StringBuilder()
-            JsonContext(str).block()
+            JsonScope(str).block()
             response(str.toString(), "application/json")
         }
 

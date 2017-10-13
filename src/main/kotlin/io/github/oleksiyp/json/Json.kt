@@ -14,7 +14,7 @@ private fun StringBuilder.jsonEscape(value : Any) {
     append('\"')
 }
 
-open class SeparableContext(private val out: StringBuilder) {
+open class SeparableScope(private val out: StringBuilder) {
     var first = true
 
     protected fun separate() {
@@ -26,18 +26,18 @@ open class SeparableContext(private val out: StringBuilder) {
     }
 }
 
-class JsonContext(internal val out: StringBuilder) : SeparableContext(out) {
-    fun hash(block: HashJsonContext.() -> Unit) {
+class JsonScope(internal val out: StringBuilder) : SeparableScope(out) {
+    fun hash(block: HashJsonScope.() -> Unit) {
         separate()
         out.append('{')
-        HashJsonContext(out).block()
+        HashJsonScope(out).block()
         out.append('}')
     }
 
-    fun seq(block: JsonContext.() -> Unit) {
+    fun seq(block: JsonScope.() -> Unit) {
         separate()
         out.append('[')
-        JsonContext(out).block()
+        JsonScope(out).block()
         out.append(']')
     }
 
@@ -52,11 +52,11 @@ class JsonContext(internal val out: StringBuilder) : SeparableContext(out) {
     }
 }
 
-class HashJsonContext(private val out: StringBuilder) : SeparableContext(out) {
-    operator fun String.rangeTo(block: JsonContext.() -> Unit) {
+class HashJsonScope(private val out: StringBuilder) : SeparableScope(out) {
+    operator fun String.rangeTo(block: JsonScope.() -> Unit) {
         separate()
         out.jsonEscape(this)
         out.append(":")
-        JsonContext(out).block()
+        JsonScope(out).block()
     }
 }

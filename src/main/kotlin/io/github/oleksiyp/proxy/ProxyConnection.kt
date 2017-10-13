@@ -9,20 +9,20 @@ class ProxyConnection(val listenPort: Int,
                       val connectHost: String,
                       val connectPort: Int) {
 
-    private fun pumpJob(input: HandlerContext<*>, output: HandlerContext<*>) = launch {
+    private fun pumpJob(input: CoroutineHandler<*>, output: CoroutineHandler<*>) = launch {
         while (isActive) {
             output.send(input.receive()!!)
         }
     }
 
-    val client = Client<ByteBuf>()
+    val client = NettyClient()
 
-    val server = Server(listenPort) {
-        pipeline.addHandler<ByteBuf> {
+    val server = NettyServer(listenPort) {
+        pipeline.addCoroutineHandler {
             val clientCtx = try {
                 client.connect(connectHost, connectPort)
             } catch (x: IOException) {
-                return@addHandler
+                return@addCoroutineHandler
             }
 
             val c2s = pumpJob(clientCtx, this)
@@ -37,8 +37,11 @@ class ProxyConnection(val listenPort: Int,
     }
 
     fun stop() {
-        server.bootstrap.config().childGroup().shutdownGracefully()
-        server.bootstrap.config().group().shutdownGracefully()
-        client.bootstrap.config().group().shutdownGracefully()
+        val cfg = server.bootstrap.config()
+        cfg.childGroup().shutdownGracefully()
+        cfg.group().shutdownGracefully()
+
+        val clCfg = client.bootstrap.config()
+        clCfg.group().shutdownGracefully()
     }
 }
