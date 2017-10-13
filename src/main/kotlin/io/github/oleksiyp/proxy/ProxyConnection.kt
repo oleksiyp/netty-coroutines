@@ -14,7 +14,7 @@ class ProxyConnection(val listenPort: Int,
                       val connectPort: Int) {
 
 
-    private fun pumpJob(input: CoroutineHandler<ByteBuf>, output: CoroutineHandler<*>, counter: AtomicInteger) = launch {
+    private fun pumpJob(input: NettyScope<ByteBuf>, output: NettyScope<*>, counter: AtomicInteger) = launch {
         while (isActive) {
             val buf = input.receive()
             val bufSz = buf.writerIndex() - buf.readerIndex()
@@ -40,14 +40,14 @@ class ProxyConnection(val listenPort: Int,
                 return@addCoroutineHandler
             }
 
-            val c2sTransferred = AtomicInteger()
-            val s2cTransferred = AtomicInteger()
+            val inbound = AtomicInteger()
+            val outbound = AtomicInteger()
 
-            val transferredLogger = transferredLoggingJob(c2sTransferred, s2cTransferred, 1000)
+            val transferredLogger = transferredLoggingJob(inbound, outbound, 1000)
 
 
-            val c2s = pumpJob(clientCtx, this, c2sTransferred)
-            val s2c = pumpJob(this, clientCtx, s2cTransferred)
+            val c2s = pumpJob(clientCtx, this, inbound)
+            val s2c = pumpJob(this, clientCtx, outbound)
 
             listOf(s2c, c2s).mutualClose()
             listOf(clientCtx, this).mutualCloseJobs()
@@ -83,7 +83,9 @@ class ProxyConnection(val listenPort: Int,
             delay(delay)
             if (inboundTransferred.update(inbound.get())
                     || outboundTransferred.update(outbound.get())) {
-                log("Transferred inbound: ${inboundTransferred.transferred} outbound: ${outboundTransferred.transferred}")
+                log("Transferred " +
+                        "inbound: ${inboundTransferred.transferred} " +
+                        "outbound: ${outboundTransferred.transferred}")
             }
         }
     }
