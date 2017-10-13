@@ -41,7 +41,7 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
         var sendChannel = RendezvousChannel<Any>()
 
         fun dataReceived(msg: I) {
-            val empty = b()
+            val empty = receiveChannel.isEmpty
             readabilityChanged(empty)
             receiveChannel.offer(msg)
         }
@@ -78,11 +78,6 @@ class CoroutineHandler<I>(internal val internal: Internal<I>) {
             val data = receiveChannel.receive()
             readabilityChanged(receiveChannel.isEmpty)
             return data
-        }
-
-        private fun b(): Boolean {
-            val empty = receiveChannel.isEmpty
-            return empty
         }
 
     }
