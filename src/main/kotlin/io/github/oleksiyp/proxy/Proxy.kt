@@ -68,9 +68,7 @@ class Proxy {
                 route("/proxy/(.+)/log") {
                     val listenPort = regexGroups[1].toInt()
 
-                    val connection = getConnection(listenPort)
-
-                    val log = connection.log.toString().replace("\n", "</br>")
+                    getConnection(listenPort)
 
                     response("""
                         |<html>
