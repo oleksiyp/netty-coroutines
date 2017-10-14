@@ -5,6 +5,7 @@ import io.netty.buffer.ByteBuf
 import kotlinx.coroutines.experimental.cancelAndJoin
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
+import kotlinx.coroutines.experimental.runBlocking
 import java.io.IOException
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
@@ -13,6 +14,8 @@ class ProxyConnection(val listenPort: Int,
                       val connectHost: String,
                       val connectPort: Int) {
 
+    val inbound = AtomicInteger()
+    val outbound = AtomicInteger()
 
     private fun pumpJob(input: NettyScope<ByteBuf>, output: NettyScope<*>, counter: AtomicInteger) = launch {
         while (isActive) {
@@ -23,39 +26,34 @@ class ProxyConnection(val listenPort: Int,
         }
     }
 
-    val log = StringBuffer()
+    val log = Log()
+    fun log(msg: String) = log.append("${Date()}: $msg")
+    val transferredLogger = launch { transferredLoggingJob(inbound, outbound, 1000) }
 
-    fun log(msg: String) {
-        log.append(Date()).append(": ").append(msg).append("\n")
-        println(msg)
-    }
-
-    val client = NettyClient()
-
-    val server = NettyServer(listenPort) {
+    private val client = NettyClient()
+    private val server = NettyServer(listenPort) {
         pipeline.addCoroutineHandler {
+            log("Connecting $connectHost:$connectPort")
             val clientCtx = try {
                 client.connect(connectHost, connectPort)
-            } catch (x: IOException) {
+            } catch (ex: IOException) {
+                log("Error connecting: ${ex.message}")
                 return@addCoroutineHandler
             }
+            log("Connected $connectHost:$connectPort")
 
-            val inbound = AtomicInteger()
-            val outbound = AtomicInteger()
+            try {
+                val c2s = pumpJob(clientCtx, this, inbound)
+                val s2c = pumpJob(this, clientCtx, outbound)
 
-            val transferredLogger = transferredLoggingJob(inbound, outbound, 1000)
+                listOf(s2c, c2s).mutualClose()
+                listOf(clientCtx, this).jobsMutualClose()
 
-
-            val c2s = pumpJob(clientCtx, this, inbound)
-            val s2c = pumpJob(this, clientCtx, outbound)
-
-            listOf(s2c, c2s).mutualClose()
-            listOf(clientCtx, this).mutualCloseJobs()
-
-            s2c.join()
-            c2s.join()
-
-            transferredLogger.cancelAndJoin()
+                s2c.join()
+                c2s.join()
+            } finally {
+                log("Closing connection")
+            }
         }
     }
 
@@ -65,14 +63,18 @@ class ProxyConnection(val listenPort: Int,
 
         class TransferredDiff {
             var transferred = 0
+            var lastDiff = 0
 
             fun update(newVal: Int) =
                     if (newVal > transferred) {
+                        lastDiff = newVal - transferred
                         transferred = newVal
                         true
                     } else {
+                        lastDiff = 0
                         false
                     }
+
 
         }
 
@@ -82,10 +84,10 @@ class ProxyConnection(val listenPort: Int,
         while (isActive) {
             delay(delay)
             if (inboundTransferred.update(inbound.get())
-                    || outboundTransferred.update(outbound.get())) {
+                    or outboundTransferred.update(outbound.get())) {
                 log("Transferred " +
-                        "inbound: ${inboundTransferred.transferred} " +
-                        "outbound: ${outboundTransferred.transferred}")
+                        "inbound: ${inboundTransferred.lastDiff} " +
+                        "outbound: ${outboundTransferred.lastDiff}")
             }
         }
     }
@@ -97,5 +99,9 @@ class ProxyConnection(val listenPort: Int,
 
         val clCfg = client.bootstrap.config()
         clCfg.group().shutdownGracefully()
+
+        runBlocking {
+            transferredLogger.cancelAndJoin()
+        }
     }
 }

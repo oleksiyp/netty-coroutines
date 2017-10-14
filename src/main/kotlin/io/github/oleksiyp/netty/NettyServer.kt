@@ -6,7 +6,6 @@ import io.netty.channel.*
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.codec.http.*
-import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame
 import io.netty.handler.codec.http.websocketx.WebSocketFrame
 import io.netty.handler.codec.http.websocketx.WebSocketFrameAggregator
 import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory
@@ -87,8 +86,8 @@ open class NettyServer(port: Int,
         fun ChannelPipeline.addWebSocketHandler(
                 requestHandler: suspend WebSocketHandlerScope.() -> Unit) {
 
-            val handler: suspend NettyScope<WebSocketFrame>.() -> Unit = {
-                WebSocketHandlerScope(internal).requestHandler()
+            val handler: suspend NettyScope<WebSocketFrame>.(String) -> Unit = { uri ->
+                WebSocketHandlerScope(uri, internal).requestHandler()
             }
 
             addLast(object : SimpleChannelInboundHandler<HttpRequest>() {
@@ -105,10 +104,12 @@ open class NettyServer(port: Int,
                 }
 
                 override fun channelRead0(ctx: ChannelHandlerContext, req: HttpRequest) {
-                    val coroutineHandler = NettyCoroutineHandler<WebSocketFrame>(
-                            WebSocketFrame::class.java, coroutineContext, handler)
+                    val uri = req.uri()
+                    val coroutineHandler = NettyCoroutineHandler(WebSocketFrame::class.java,
+                            coroutineContext, { handler(uri) })
 
                     coroutineHandler.channelRegistered(ctx)
+
 
                     ctx.pipeline().replace(this, "webSocketHandler",
                             coroutineHandler)

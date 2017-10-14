@@ -51,7 +51,7 @@ class NettyCoroutineHandler<I>(cls: Class<I>,
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
         runBlocking(coroutineContext) {
-            ctx.scope().internal.cancel()
+            ctx.scope().internal.close()
             ctx.setScope(null)
         }
     }
@@ -85,7 +85,7 @@ class NettyCoroutineHandler<I>(cls: Class<I>,
             } catch (ex: Exception) {
                 ch.pipeline().fireExceptionCaught(ex)
             } finally {
-                internal.cancel()
+                internal.close()
                 ch.close()
             }
         }
@@ -99,6 +99,7 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         get() = internal.isActive()
 
     suspend fun receive(): I = internal.receive()
+    suspend fun skipAllReceived() = internal.skipAllReceived()
 
     suspend fun receive(block: suspend (I) -> Unit) {
         val msg = receive()
@@ -119,6 +120,7 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         lateinit var job: Job
         lateinit var readabilityChanged: (Boolean) -> Unit
         lateinit var write: (msg: Any) -> ChannelFuture
+        val onCloseHandlers = mutableListOf<suspend () -> Unit>()
 
         val readabilityBarrier = ReadabilityBarrier(10)
 
@@ -139,6 +141,10 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
             }
             readabilityBarrier.changeReadability(receiveChannel.isEmpty)
             return data
+        }
+
+        suspend fun skipAllReceived() {
+            receiveChannel.close()
         }
 
         inner class ReadabilityBarrier(val threshold: Int) {
@@ -188,8 +194,12 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         }
 
 
-        suspend fun cancel() {
+        suspend fun close() {
             job.cancel()
+            job.join()
+            for (handler in onCloseHandlers) {
+                handler()
+            }
         }
 
 
@@ -207,6 +217,6 @@ suspend fun List<Job>.mutualClose() {
 }
 
 
-suspend fun List<NettyScope<*>>.mutualCloseJobs() {
+suspend fun List<NettyScope<*>>.jobsMutualClose() {
     map { it.internal.job }.mutualClose()
 }

@@ -1,11 +1,9 @@
 package io.github.oleksiyp.proxy
 
-import io.github.oleksiyp.netty.*
-import io.netty.buffer.ByteBufUtil
+import io.github.oleksiyp.netty.NettyServer
+import io.github.oleksiyp.netty.route
 import io.netty.handler.codec.http.HttpResponseStatus
-import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame
-import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame
+import kotlinx.coroutines.experimental.runBlocking
 
 class Proxy {
     val connections = mutableListOf<ProxyConnection>()
@@ -14,18 +12,20 @@ class Proxy {
         NettyServer(5555) {
             pipeline.addServerHttpCodec()
             pipeline.addWebSocketHandler {
-                outer@ while (isActive) {
-                    val frame = receive()
-                    when(frame) {
-                        is TextWebSocketFrame -> println(frame.text())
-                        is BinaryWebSocketFrame -> {
-                            val buf = StringBuilder()
-                            ByteBufUtil.appendPrettyHexDump(buf, frame.content())
-                            println(buf)
+                route("/proxy/(.+)/log") {
+                    val connection = getConnection(regexGroups[1].toInt())
+                    val unsubscribe = connection.log.subscribe {
+                        runBlocking {
+                            send(it)
                         }
-                        is CloseWebSocketFrame -> break@outer
                     }
-                    send(frame)
+                    try {
+                        while (isActive) {
+                            receive()
+                        }
+                    } finally {
+                        unsubscribe()
+                    }
                 }
             }
             pipeline.addHttpHandler {
@@ -77,15 +77,14 @@ class Proxy {
                         |   <head>
                         |   <script>
                         |       var protocolPrefix = (window.location.protocol === 'https:') ? 'wss:' : 'ws:';
-                        |       var connection = new WebSocket(protocolPrefix + '//' + location.host + '/proxy/$listenPort/log-ws');
-                        |       connection.onopen = function () {
-                        |           connection.send('Ping');
-                        |       };
+                        |       var connection = new WebSocket(protocolPrefix + '//' + location.host + '/proxy/$listenPort/log');
                         |       connection.onerror = function (error) {
                         |           console.log('WebSocket Error', error);
                         |       };
                         |       connection.onmessage = function (e) {
-                        |           console.log('Server: ' + e.data);
+                        |           var log = document.getElementById("log")
+                        |           log.appendChild(document.createTextNode(e.data));
+                        |           log.appendChild(document.createElement("br"));
                         |       };
                         |
                         |   </script>
