@@ -1,4 +1,4 @@
-package io.github.oleksiyp.proxy
+package io.github.oleksiyp.proxy.service
 
 import java.util.Collections.synchronizedList
 
@@ -6,7 +6,7 @@ class Log {
     val msgs = synchronizedList(mutableListOf<String>())
     val subscribers = synchronizedList(mutableListOf<(String) -> Unit>())
 
-    fun subscribe(subscriber: (String) -> Unit): () -> Unit {
+    fun subscribe(subscriber: (String) -> Unit): AutoCloseable {
         synchronized(msgs) {
             subscribers.add(subscriber)
 
@@ -15,7 +15,7 @@ class Log {
             }
         }
 
-        return {
+        return AutoCloseable {
             subscribers.remove(subscriber)
         }
     }

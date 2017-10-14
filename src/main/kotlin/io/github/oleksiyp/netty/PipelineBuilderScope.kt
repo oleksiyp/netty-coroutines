@@ -13,8 +13,15 @@ import kotlinx.coroutines.experimental.CoroutineDispatcher
 import kotlinx.coroutines.experimental.DefaultDispatcher
 import kotlinx.coroutines.experimental.runBlocking
 
-class PipelineBuilderScope(val pipeline: ChannelPipeline,
-                           val nettyDispatcher: CoroutineDispatcher) {
+abstract class PipelineBuilderScope(val pipeline: ChannelPipeline,
+                                    val nettyDispatcher: CoroutineDispatcher)
+
+class ClientPipelineBuilderScope(pipeline: ChannelPipeline,
+                                 nettyDispatcher: CoroutineDispatcher) : PipelineBuilderScope(pipeline, nettyDispatcher)
+
+class ServerPipelineBuilderScope(pipeline: ChannelPipeline,
+                                 nettyDispatcher: CoroutineDispatcher) : PipelineBuilderScope(pipeline, nettyDispatcher) {
+
 
     fun <I> ChannelPipeline.addCoroutineHandler(cls: Class<I>,
                                                 dispatcher: CoroutineDispatcher = DefaultDispatcher,

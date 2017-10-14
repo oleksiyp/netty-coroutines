@@ -1,4 +1,4 @@
-package io.github.oleksiyp.proxy
+package io.github.oleksiyp.proxy.service
 
 import io.github.oleksiyp.netty.*
 import io.netty.buffer.ByteBuf

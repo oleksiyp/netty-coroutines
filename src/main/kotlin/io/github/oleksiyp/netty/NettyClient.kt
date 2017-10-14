@@ -7,12 +7,14 @@ import io.netty.channel.ChannelInitializer
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.util.AttributeKey
+import kotlinx.coroutines.experimental.asCoroutineDispatcher
 import kotlinx.coroutines.experimental.cancelFutureOnCompletion
 import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 
-fun NettyClient() = NettyClient(ByteBuf::class.java)
+fun NettyClient(pipelineBuilder: ClientPipelineBuilderScope.() -> Unit = {}) = NettyClient(ByteBuf::class.java, pipelineBuilder)
 
-class NettyClient<I>(cls: Class<I>) {
+class NettyClient<I>(cls: Class<I>,
+                     private val pipelineBuilder: ClientPipelineBuilderScope.() -> Unit = {}) {
     val bootstrap = Bootstrap()
             .group(NioEventLoopGroup())
             .channel(NioSocketChannel::class.java)
@@ -39,7 +41,8 @@ class NettyClient<I>(cls: Class<I>) {
         bootstrap.handler(object : ChannelInitializer<Channel>() {
             override fun initChannel(ch: Channel) {
                 val pipeline = ch.pipeline()
-
+                val nettyDispatcher = bootstrap.config().group().asCoroutineDispatcher()
+                ClientPipelineBuilderScope(pipeline, nettyDispatcher).pipelineBuilder()
                 pipeline.addLast(NettyCoroutineHandler(cls, attribute = attribute))
             }
         })
