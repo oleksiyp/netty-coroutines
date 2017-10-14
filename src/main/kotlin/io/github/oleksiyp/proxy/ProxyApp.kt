@@ -8,8 +8,8 @@ import io.netty.handler.codec.http.HttpResponseStatus
 
 
 class ProxyApp {
-    val proxyOps = ProxyImplementation()
-    val controller = ProxyController(proxyOps) + AboutController()
+    private val proxyOps = ProxyImplementation()
+    private val controller = ProxyController(proxyOps) + AboutController()
 
     init {
         NettyServer(5555) {
