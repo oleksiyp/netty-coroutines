@@ -11,11 +11,13 @@ import kotlinx.coroutines.experimental.*
 import kotlinx.coroutines.experimental.channels.LinkedListChannel
 import java.nio.channels.ClosedChannelException
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class NettyCoroutineHandler<I>(cls: Class<I>,
-                               private val requestHandler: (suspend NettyScope<I>.() -> Unit)? = null,
-                               private val attribute: AttributeKey<NettyScope<I>> = AttributeKey.newInstance<NettyScope<I>>("COROUTINE_HANDLER_" + Math.random()))
+                               private val dispatcher: CoroutineDispatcher = DefaultDispatcher,
+                               private val attribute: AttributeKey<NettyScope<I>> = AttributeKey.newInstance<NettyScope<I>>("COROUTINE_HANDLER_" + Math.random()),
+                               private val requestHandler: (suspend NettyScope<I>.() -> Unit)? = null)
     : SimpleChannelInboundHandler<I>(cls) {
 
     private val logger = InternalLoggerFactory.getInstance(NettyCoroutineHandler::class.java)
@@ -59,7 +61,7 @@ class NettyCoroutineHandler<I>(cls: Class<I>,
     }
 
     fun newNettyScope(ch: Channel): NettyScope<I> {
-        val internal = NettyScope.Internal<I>(ch)
+        val internal = NettyScope.Internal<I>(ch, dispatcher)
         val handlerCtx = NettyScope(internal)
 
         internal.go {
@@ -105,7 +107,10 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         internal.send(obj)
     }
 
-    class Internal<I>(private val ch: Channel, private val writeability: Boolean = true) {
+    class Internal<I>(private val ch: Channel,
+                      private val dispatcher: CoroutineDispatcher,
+                      private val writeability: Boolean = true) {
+
         lateinit var job: Job
         fun isActive() = job.isActive
 
@@ -124,7 +129,7 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
 
         private val readabilityBarrier = ReadabilityBarrier(10)
         private val writeContinuation = AtomicReference<CancellableContinuation<Unit>>()
-        private var receiveChannel = LinkedListChannel<I>()
+        private val receiveChannel = LinkedListChannel<I>()
 
         fun dataReceived(msg: I) {
             readabilityBarrier.changeReadability(receiveChannel.isEmpty)
@@ -146,14 +151,13 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         }
 
         inner class ReadabilityBarrier(val threshold: Int) {
-            private var nNonReadable = 0
+            private val nNonReadable = AtomicInteger()
             fun changeReadability(readability: Boolean) {
                 if (readability) {
                     readabilityChanged(true)
-                    nNonReadable = 0
+                    nNonReadable.set(0)
                 } else {
-                    nNonReadable++
-                    if (nNonReadable > threshold) {
+                    if (nNonReadable.incrementAndGet() > threshold) {
                         readabilityChanged(false)
                     }
                 }
@@ -204,10 +208,8 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
 
         fun go(block: suspend () -> Unit) {
             val q = ArrayBlockingQueue<CancellableContinuation<Unit>>(1)
-            job = launch {
-                suspendCancellableCoroutine<Unit> { cont ->
-                    q.put(cont)
-                }
+            job = launch(dispatcher) {
+                suspendCancellableCoroutine<Unit> { cont -> q.put(cont) }
                 // after this line job is assigned
                 block()
             }

@@ -11,7 +11,7 @@ class Proxy {
     init {
         NettyServer(5555) {
             pipeline.addServerHttpCodec()
-            pipeline.addWebSocketHandler {
+            pipeline.addServerWebSocketHandler(nettyDispatcher) {
                 route("/proxy/(.+)/log") {
                     val connection = getConnection(regexGroups[1].toInt())
                     val unsubscribe = connection.log.subscribe {
@@ -28,10 +28,10 @@ class Proxy {
                     }
                 }
             }
-            pipeline.addErrorHttpHandler {
+            pipeline.addServerErrorHttpHandler(nettyDispatcher) {
                 response("Error: " + cause.message!!, status = HttpResponseStatus.BAD_REQUEST)
             }
-            pipeline.addHttpHandler {
+            pipeline.addServerHttpHandler(nettyDispatcher) {
                 route("/proxy/listen/(.+)") {
                     val listenPort = regexGroups[1].toInt()
 
@@ -99,14 +99,14 @@ class Proxy {
                 }
             }
         }
-
-        listen(5556, "localhost", 22)
     }
 
-    private fun getConnection(listenPort: Int): ProxyConnection =
-            connections.firstOrNull {
-                it.listenPort == listenPort
-            } ?: throw RuntimeException("not listeneing to " + listenPort)
+    private fun getConnection(listenPort: Int): ProxyConnection {
+        return connections.firstOrNull {
+            it.listenPort == listenPort
+        } ?: throw RuntimeException("not listeneing to " + listenPort)
+    }
+
 
     private fun listen(listenPort: Int,
                        connectHost: String,

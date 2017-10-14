@@ -27,7 +27,11 @@ class NettyClient<I>(cls: Class<I>) {
                 future.addListener {
                     val channel = future.channel()
                     val handler = channel.attr(attribute).get()
-                    cont.resume(handler)
+                    if (future.isSuccess) {
+                        cont.resume(handler)
+                    } else {
+                        cont.resumeWithException(future.cause())
+                    }
                 }
             }
 
