@@ -9,7 +9,6 @@ import io.netty.handler.codec.http.*
 import io.netty.handler.codec.http.websocketx.WebSocketFrame
 import io.netty.handler.codec.http.websocketx.WebSocketFrameAggregator
 import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory
-import kotlinx.coroutines.experimental.asCoroutineDispatcher
 import kotlinx.coroutines.experimental.runBlocking
 
 open class NettyServer(port: Int,
@@ -19,9 +18,6 @@ open class NettyServer(port: Int,
     val bootstrap = ServerBootstrap()
             .group(NioEventLoopGroup(), NioEventLoopGroup())
             .channel(NioServerSocketChannel::class.java)
-
-
-    val coroutineContext = bootstrap.config().childGroup().asCoroutineDispatcher()
 
     init {
         bootstrap.childHandler(object : ChannelInitializer<Channel>() {
@@ -38,7 +34,7 @@ open class NettyServer(port: Int,
 
         fun <I> ChannelPipeline.addCoroutineHandler(cls: Class<I>,
                                                     requestHandler: suspend NettyScope<I>.() -> Unit) {
-            addLast(NettyCoroutineHandler(cls, coroutineContext, requestHandler))
+            addLast(NettyCoroutineHandler(cls, requestHandler))
         }
 
         fun ChannelPipeline.addCoroutineHandler(requestHandler: suspend NettyScope<ByteBuf>.() -> Unit) {
@@ -55,13 +51,11 @@ open class NettyServer(port: Int,
             addLast(object : ChannelDuplexHandler() {
                 override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
                     runBlocking {
-                        val internal = NettyScope.Internal<HttpRequest>()
-                        internal.isActive = this::isActive
-                        internal.isWriteable = ctx.channel()::isWritable
-                        internal.write = { ctx.writeAndFlush(it) }
-                        internal.readabilityChanged = {}
-                        ErrorHttpHandlerScope(cause, internal).requestHandler()
-                        ctx.channel().close()
+                        val internal = NettyScope.Internal<HttpRequest>(ctx.channel(), false)
+                        internal.go {
+                            ErrorHttpHandlerScope(cause, internal).requestHandler()
+                            ctx.channel().close()
+                        }
                     }
                 }
             })
@@ -83,8 +77,8 @@ open class NettyServer(port: Int,
             }
         }
 
-        fun ChannelPipeline.addWebSocketHandler(
-                requestHandler: suspend WebSocketHandlerScope.() -> Unit) {
+        fun ChannelPipeline.addWebSocketHandler(maxFragmentSize: Int = 512 * 1024,
+                                                requestHandler: suspend WebSocketHandlerScope.() -> Unit) {
 
             val handler: suspend NettyScope<WebSocketFrame>.(String) -> Unit = { uri ->
                 WebSocketHandlerScope(uri, internal).requestHandler()
@@ -105,19 +99,18 @@ open class NettyServer(port: Int,
 
                 override fun channelRead0(ctx: ChannelHandlerContext, req: HttpRequest) {
                     val uri = req.uri()
-                    val coroutineHandler = NettyCoroutineHandler(WebSocketFrame::class.java,
-                            coroutineContext, { handler(uri) })
+                    val coroutineHandler = NettyCoroutineHandler(WebSocketFrame::class.java, {
+                        handler(uri)
+                    })
 
                     coroutineHandler.channelRegistered(ctx)
 
 
-                    ctx.pipeline().replace(this, "webSocketHandler",
-                            coroutineHandler)
+                    ctx.pipeline().replace(this, "webSocketHandler",coroutineHandler)
+                    ctx.pipeline().addBefore("webSocketHandler", "webSocketAggregator", WebSocketFrameAggregator(maxFragmentSize))
 
-                    ctx.pipeline().addAfter("webSocketHandler", "webSocketAggregator", WebSocketFrameAggregator(512 * 1024))
-
-
-                    val wsFactory = WebSocketServerHandshakerFactory(getWebSocketURL(req), null, true)
+                    val webSocketURL = getWebSocketURL(req)
+                    val wsFactory = WebSocketServerHandshakerFactory(webSocketURL, null, true)
                     val handshaker = wsFactory.newHandshaker(req)
                     if (handshaker == null) {
                         WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel())

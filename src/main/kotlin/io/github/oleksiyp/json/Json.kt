@@ -59,4 +59,12 @@ class HashJsonScope(private val out: StringBuilder) : SeparableScope(out) {
         out.append(":")
         JsonScope(out).block()
     }
+
+    operator fun String.rangeTo(value: Any) {
+        rangeTo({ str(value) })
+    }
+
+    operator fun String.rangeTo(value: Number) {
+        rangeTo({ num(value) })
+    }
 }

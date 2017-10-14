@@ -28,6 +28,9 @@ class Proxy {
                     }
                 }
             }
+            pipeline.addErrorHttpHandler {
+                response("Error: " + cause.message!!, status = HttpResponseStatus.BAD_REQUEST)
+            }
             pipeline.addHttpHandler {
                 route("/proxy/listen/(.+)") {
                     val listenPort = regexGroups[1].toInt()
@@ -47,9 +50,9 @@ class Proxy {
                         seq {
                             connections.forEach {
                                 hash {
-                                    "listenPort"..{ num(it.listenPort) }
-                                    "connectHost"..{ str(it.connectHost) }
-                                    "connectPort"..{ num(it.connectPort) }
+                                    "listenPort" .. it.listenPort
+                                    "connectHost" .. it.connectHost
+                                    "connectPort" .. it.connectPort
                                 }
                             }
                         }
@@ -83,6 +86,7 @@ class Proxy {
                         |           var log = document.getElementById("log")
                         |           log.appendChild(document.createTextNode(e.data));
                         |           log.appendChild(document.createElement("br"));
+                        |           window.scrollBy(0, log.scrollHeight);
                         |       };
                         |
                         |   </script>
@@ -93,9 +97,6 @@ class Proxy {
                         |</html>
                     """.trimMargin())
                 }
-            }
-            pipeline.addErrorHttpHandler {
-                response("Error: " + cause.message!!, status = HttpResponseStatus.BAD_REQUEST)
             }
         }
 

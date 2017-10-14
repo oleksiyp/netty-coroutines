@@ -47,7 +47,7 @@ class ProxyConnection(val listenPort: Int,
                 val s2c = pumpJob(this, clientCtx, outbound)
 
                 listOf(s2c, c2s).mutualClose()
-                listOf(clientCtx, this).jobsMutualClose()
+                listOf(clientCtx, this).scopesMutualClose()
 
                 s2c.join()
                 c2s.join()
