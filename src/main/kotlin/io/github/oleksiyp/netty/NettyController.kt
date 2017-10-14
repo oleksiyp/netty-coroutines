@@ -1,7 +1,4 @@
-package io.github.oleksiyp.netty.handling
-
-import io.github.oleksiyp.netty.RequestHttpHandlerScope
-import io.github.oleksiyp.netty.WebSocketHandlerScope
+package io.github.oleksiyp.netty
 
 interface NettyController {
     val httpHandler: suspend RequestHttpHandlerScope.() -> Unit

@@ -1,8 +1,8 @@
 package io.github.oleksiyp.proxy.controller
 
+import io.github.oleksiyp.netty.DefaultNettyController
 import io.github.oleksiyp.netty.RequestHttpHandlerScope
 import io.github.oleksiyp.netty.WebSocketHandlerScope
-import io.github.oleksiyp.netty.handling.DefaultNettyController
 import io.github.oleksiyp.netty.route
 import io.github.oleksiyp.proxy.service.Proxy
 import kotlinx.coroutines.experimental.runBlocking
@@ -52,17 +52,23 @@ class ProxyController(val proxyOps: Proxy) : DefaultNettyController() {
                         |<html>
                         |   <head>
                         |   <script>
+                        |       function append(text) {
+                        |           var log = document.getElementById("log")
+                        |           log.appendChild(document.createTextNode(text));
+                        |           log.appendChild(document.createElement("br"));
+                        |           window.scrollBy(0, log.scrollHeight);
+                        |       }
                         |       var protocolPrefix = (window.location.protocol === 'https:') ? 'wss:' : 'ws:';
                         |       var connection = new WebSocket(protocolPrefix + '//' + location.host + '/proxy/$listenPort/log');
                         |       connection.onerror = function (error) {
                         |           console.log('WebSocket Error', error);
                         |       };
                         |       connection.onmessage = function (e) {
-                        |           var log = document.getElementById("log")
-                        |           log.appendChild(document.createTextNode(e.data));
-                        |           log.appendChild(document.createElement("br"));
-                        |           window.scrollBy(0, log.scrollHeight);
+                        |           append(e.data)
                         |       };
+                        |       connection.onclose = function(event) {
+                        |           append("CLOSED")
+                        |       }
                         |
                         |   </script>
                         |   </head>

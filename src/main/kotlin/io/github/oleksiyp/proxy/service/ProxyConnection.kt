@@ -14,8 +14,8 @@ class ProxyConnection(val listenPort: Int,
                       val connectHost: String,
                       val connectPort: Int) {
 
-    val inbound = AtomicInteger()
-    val outbound = AtomicInteger()
+    private val inbound = AtomicInteger()
+    private val outbound = AtomicInteger()
 
     private fun pumpJob(input: NettyScope<ByteBuf>, output: NettyScope<*>, counter: AtomicInteger) = launch {
         while (isActive) {
@@ -28,7 +28,10 @@ class ProxyConnection(val listenPort: Int,
 
     val log = Log()
     fun log(msg: String) = log.append("${Date()}: $msg")
-    val transferredLogger = launch { transferredLoggingJob(inbound, outbound, 1000) }
+
+    private val transferredLogger = launch {
+        transferredLoggingJob(inbound, outbound, 1000)
+    }
 
     private val client = NettyClient()
     private val server = NettyServer(listenPort) {

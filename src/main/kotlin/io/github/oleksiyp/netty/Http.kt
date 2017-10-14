@@ -2,11 +2,8 @@ package io.github.oleksiyp.netty
 
 import io.github.oleksiyp.json.JsonScope
 import io.netty.buffer.ByteBuf
-import io.netty.buffer.Unpooled
 import io.netty.handler.codec.http.*
 import java.nio.charset.Charset
-import java.util.regex.Matcher
-import java.util.regex.Pattern
 
 
 class ErrorHttpHandlerScope(val cause: Throwable,
@@ -45,7 +42,9 @@ abstract class HttpHandlerScope(internal: Internal<HttpRequest>) : NettyScope<Ht
                          status: HttpResponseStatus = HttpResponseStatus.OK) {
 
 
-        val data = Unpooled.copiedBuffer(html, charset)
+        val bytes = html.toByteArray(charset)
+
+        val data = alloc().buffer(bytes.size).writeBytes(bytes)
 
         val response = DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, data)
 
@@ -90,33 +89,11 @@ abstract class HttpHandlerScope(internal: Internal<HttpRequest>) : NettyScope<Ht
         }
     }
 
+    suspend fun alloc() = internal.channel.alloc()
+
     fun QueryStringDecoder.firstParam(key: String) = parameters()?.get(key)?.getOrNull(0)
     fun QueryStringDecoder.firstIntParam(key: String) = firstParam(key)?.toIntOrNull()
 }
-
-
-class RouteContext(private val matcher: Matcher) {
-    val regexGroups = object : AbstractList<String>() {
-        override fun get(index: Int): String = matcher.group(index)
-
-        override val size: Int
-            get() = matcher.groupCount() + 1
-    }
-}
-
-suspend fun RequestHttpHandlerScope.route(regexp: String,
-                                          method: HttpMethod? = null,
-                                          methods: MutableList<HttpMethod> = mutableListOf(HttpMethod.GET),
-                                          block: suspend RouteContext.() -> Unit) {
-    val matcher = Pattern.compile(regexp).matcher(params.path())
-    if (method != null) {
-        methods += method
-    }
-    if (matcher.matches() && methods.contains(request.method())) {
-        RouteContext(matcher).block()
-    }
-}
-
 
 suspend fun HttpHandlerScope.staticResourcesHandler(path: String, resourcesBase: String) {
     val resource = this.javaClass.classLoader.getResource(resourcesBase + "/" + path)
@@ -138,7 +115,7 @@ suspend fun HttpHandlerScope.staticResourcesHandler(path: String, resourcesBase:
             if (r <= 0) {
                 break
             }
-            content(Unpooled.copiedBuffer(bytes, 0, r))
+            content(alloc().buffer(r).writeBytes(bytes))
         }
     }
 }

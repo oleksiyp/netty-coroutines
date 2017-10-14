@@ -60,30 +60,30 @@ class NettyCoroutineHandler<I>(cls: Class<I>,
         }
     }
 
-    fun newNettyScope(ch: Channel): NettyScope<I> {
-        val internal = NettyScope.Internal<I>(ch, dispatcher)
+    fun newNettyScope(channel: Channel): NettyScope<I> {
+        val internal = NettyScope.Internal<I>(channel, dispatcher)
         val handlerCtx = NettyScope(internal)
 
         internal.go {
             try {
                 if (requestHandler == null) {
-                    suspendCancellableCoroutine<Unit> { }
+                    pauseTillCancel()
                 } else {
-                    requestHandler.let {
-                        handlerCtx.it()
-                    }
+                    requestHandler.invoke(handlerCtx)
                 }
                 internal.notifyCloseHandlers()
-                ch.close()
+                channel.close()
             } catch (ex: JobCancellationException) {
                 internal.notifyCloseHandlers()
-                ch.close()
+                channel.close()
             } catch (ex: Exception) {
-                ch.pipeline().fireExceptionCaught(ex)
+                channel.pipeline().fireExceptionCaught(ex)
             }
         }
         return handlerCtx
     }
+
+    private suspend fun pauseTillCancel() = suspendCancellableCoroutine<Unit> { }
 }
 
 
@@ -107,7 +107,7 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         internal.send(obj)
     }
 
-    class Internal<I>(private val ch: Channel,
+    class Internal<I>(val channel: Channel,
                       private val dispatcher: CoroutineDispatcher,
                       private val writeability: Boolean = true) {
 
@@ -115,15 +115,15 @@ open class NettyScope<I>(internal val internal: Internal<I>) {
         fun isActive() = job.isActive
 
         fun readabilityChanged(newValue: Boolean) {
-            val chCfg = ch.config()
+            val chCfg = channel.config()
             if (chCfg.isAutoRead != newValue) {
                 chCfg.isAutoRead = newValue
             }
         }
 
-        fun write(msg: Any) = ch.writeAndFlush(msg)
+        fun write(msg: Any) = channel.writeAndFlush(msg)
 
-        fun isWritable() = if (writeability) ch.isWritable else true
+        fun isWritable() = if (writeability) channel.isWritable else true
 
         val onCloseHandlers = mutableListOf<suspend () -> Unit>()
 
