@@ -1,4 +1,4 @@
-package io.github.oleksiyp.json
+package io.github.oleksiyp.netty
 
 private fun StringBuilder.jsonEscape(value : Any) {
     append('\"')

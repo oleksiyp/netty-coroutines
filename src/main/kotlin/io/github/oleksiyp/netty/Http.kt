@@ -1,6 +1,5 @@
 package io.github.oleksiyp.netty
 
-import io.github.oleksiyp.json.JsonScope
 import io.netty.buffer.ByteBuf
 import io.netty.handler.codec.http.*
 import java.nio.charset.Charset
