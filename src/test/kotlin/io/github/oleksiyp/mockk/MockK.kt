@@ -4,9 +4,11 @@ import io.github.oleksiyp.mockk.MockK.Companion.anyValue
 import javassist.util.proxy.MethodHandler
 import javassist.util.proxy.ProxyFactory
 import javassist.util.proxy.ProxyObject
+import kotlinx.coroutines.experimental.runBlocking
 import java.lang.reflect.Method
 import java.util.*
 import java.util.Collections.synchronizedList
+import java.util.Collections.synchronizedMap
 
 // ---------------------------- USER FACING --------------------------------
 
@@ -15,17 +17,34 @@ inline fun <reified T> mockk(): T = MockK.mockk(T::class.java)
 class EqMatcher<T>(val value: T) : Matcher<T> {
     override fun match(arg: T): Boolean = arg == value
 
-    override fun toString(): String = "eq(" + value + ")"
+    override fun toString(): String = "eq(" + MockK.toString(value) + ")"
 }
 
-fun <T> on(mockBlock: MockKScope.() -> T): OngoingStubbing<T> {
+class ConstantMatcher<T>(private val value: Boolean) : Matcher<T> {
+    override fun match(arg: T): Boolean = value
+
+    override fun toString(): String = if (value) "any()" else "none()"
+}
+
+fun <T> on(mockBlock: suspend MockKScope.() -> T): OngoingStubbing<T> {
     MockK.LOCATOR().callRecorder.startRecording()
-    MockKScope().mockBlock()
+    runBlocking {
+        MockKScope().mockBlock()
+    }
     return OngoingStubbing()
+}
+
+fun <T> verify(mockBlock: suspend MockKScope.() -> T): Unit {
+    MockK.LOCATOR().callRecorder.startVerification()
+    runBlocking {
+        MockKScope().mockBlock()
+    }
+    MockK.LOCATOR().callRecorder.verify()
 }
 
 class MockKScope {
     inline fun <reified T> eq(value: T): T? = MockK.eq(value)
+    inline fun <reified T> any(): T? = MockK.any()
 }
 
 class OngoingStubbing<T> {
@@ -67,14 +86,28 @@ interface MockK {
                 Float::class.java -> 0.0F
                 Double::class.java -> 0.0
                 String::class.java -> ""
+                Object::class.java -> ""
                 else -> block()
             }
 
         }
 
         inline fun <reified T> eq(value: T): T? {
-            MockK.LOCATOR().callRecorder.addMatcher(EqMatcher(value));
+            MockK.LOCATOR().callRecorder.addMatcher(EqMatcher(value))
             return MockK.anyValue(T::class.java) { null } as T?
+        }
+
+        inline fun <reified T> any(): T? {
+            MockK.LOCATOR().callRecorder.addMatcher(ConstantMatcher<T>(true))
+            return MockK.anyValue(T::class.java) { null } as T?
+        }
+
+        fun toString(obj: Any?) : String {
+            if (obj == null)
+                return "null"
+            if (obj is Method)
+                return obj.name + "(" + obj.parameterTypes.map { it.simpleName }.joinToString() + ")"
+            return obj.toString()
         }
     }
 
@@ -85,16 +118,24 @@ interface MockK {
 interface CallRecorder {
     fun startRecording()
 
+    fun startVerification()
+
     fun addMatcher(matcher: Matcher<*>)
 
     fun addCall(invocation: Invocation): Any?
 
     fun answer(answer: Answer<*>)
+    fun verify()
 }
 
 data class Invocation(val self: MockKInstance,
                       val method: Method,
-                      val args: List<Any>)
+                      val args: List<Any>) {
+    override fun toString(): String {
+        return "Invocation(self=$self, method=${MockK.toString(method)}, args=$args)"
+    }
+}
+
 
 data class InvocationMatcher(val self: Matcher<Any>,
                              val method: Matcher<Method>,
@@ -147,6 +188,7 @@ interface MockKInstance {
 class MockKHandler(private val cls: Class<*>,
                    private val obj: Any) : MethodHandler, MockKInstance {
     private val answers = synchronizedList(mutableListOf<Pair<InvocationMatcher, Answer<*>>>())
+    private val mocks = synchronizedMap(hashMapOf<Invocation, MockKInstance>())
 
     override fun addAnswer(matcher: InvocationMatcher, answer: Answer<*>) {
         println(matcher.toString() + " " + answer)
@@ -162,7 +204,7 @@ class MockKHandler(private val cls: Class<*>,
 
     override fun type(): Class<*> = cls
 
-    override fun toString() = "mockk<" + type().name + ">()"
+    override fun toString() = "mockk<" + type().simpleName + ">()"
 
     override fun equals(other: Any?): Boolean {
         return obj === other
@@ -173,8 +215,9 @@ class MockKHandler(private val cls: Class<*>,
     }
 
     override fun childMockK(invocation: Invocation): MockKInstance {
-        val mockk = MockK.mockk(invocation.method.returnType)
-        return mockk as MockKInstance
+        return mocks.computeIfAbsent(invocation, {
+            MockK.mockk(invocation.method.returnType) as MockKInstance
+        })
     }
 
     override fun invoke(self: Any,
@@ -211,16 +254,23 @@ class MockKImpl : MockK {
     override val callRecorder: CallRecorder
         get() = callRecorderTL.get()
 
-    private data class Call(val invocation: Invocation, val matchers: List<Matcher<*>>)
+    private data class MatchedCall(val invocation: Invocation, val matchers: List<Matcher<*>>)
 
     inner class CallRecorderImpl : CallRecorder {
-        private val calls = mutableListOf<Call>()
+        private val calls = mutableListOf<Invocation>()
+        private val matchedCalls = mutableListOf<MatchedCall>()
 
         val matchers = mutableListOf<Matcher<*>>()
-        var recordingStarted = -1
+
+        var recordingLevel = -1
+        var verificationLevel = -1
 
         override fun startRecording() {
-            recordingStarted = calls.size
+            recordingLevel = matchedCalls.size
+        }
+
+        override fun startVerification() {
+            verificationLevel = matchedCalls.size
         }
 
         override fun addMatcher(matcher: Matcher<*>) {
@@ -228,31 +278,36 @@ class MockKImpl : MockK {
         }
 
         override fun addCall(invocation: Invocation): Any? {
-            if (recordingStarted == -1) {
+            if (recordingLevel != -1 || verificationLevel != -1) {
+                return addMatchedCall(invocation)
+            } else {
+                calls.add(invocation)
                 return invocation.self.findAnswer(invocation).answer(invocation)
             }
 
+        }
+
+        private fun addMatchedCall(invocation: Invocation): Any? {
             if (matchers.size == 0) {
                 matchers.addAll(invocation.args.map { EqMatcher(it) })
             }
-
             if (matchers.size != invocation.method.parameterCount) {
                 throw RuntimeException("wrong matchers count")
             }
 
-            calls.add(Call(invocation, matchers.toList()))
+            matchedCalls.add(MatchedCall(invocation, matchers.toList()))
 
             matchers.clear()
 
-            return MockK.anyValue(invocation.method.returnType) {
+            return anyValue(invocation.method.returnType) {
                 invocation.self.childMockK(invocation)
             }
         }
 
         override fun answer(answer: Answer<*>) {
             var ans = answer
-            while (calls.size != recordingStarted) {
-                calls.removeAt(calls.size - 1).let {
+            while (matchedCalls.size != recordingLevel) {
+                matchedCalls.removeAt(matchedCalls.size - 1).let {
                     it.invocation.self.addAnswer(
                             InvocationMatcher(
                                     EqMatcher(it.invocation.self),
@@ -262,7 +317,31 @@ class MockKImpl : MockK {
                     ans = ConstantAnswer(it.invocation.self)
                 }
             }
-            recordingStarted = -1
+            recordingLevel = -1
+        }
+
+        override fun verify() {
+            val invokeMatchers = mutableListOf<InvocationMatcher>()
+
+            while (matchedCalls.size != verificationLevel) {
+                matchedCalls.removeAt(matchedCalls.size - 1).let {
+                    invokeMatchers.add(InvocationMatcher(
+                            EqMatcher(it.invocation.self),
+                            EqMatcher(it.invocation.method),
+                            it.matchers as List<Matcher<Any>>))
+                }
+            }
+
+            for (invocation in calls) {
+                invokeMatchers.removeIf { it.match(invocation) }
+            }
+
+            verificationLevel = -1
+
+            if (!invokeMatchers.isEmpty()) {
+                throw RuntimeException("verification failed")
+            }
+
         }
     }
 
