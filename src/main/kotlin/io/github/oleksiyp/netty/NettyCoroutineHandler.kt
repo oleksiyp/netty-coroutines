@@ -9,6 +9,13 @@ import io.netty.util.internal.logging.InternalLogLevel
 import io.netty.util.internal.logging.InternalLoggerFactory
 import kotlinx.coroutines.experimental.*
 
+inline fun <reified I> NettyCoroutineHandler(
+        dispatcher: CoroutineDispatcher = DefaultDispatcher,
+        attribute: AttributeKey<NettyScope<I>> = AttributeKey.newInstance<NettyScope<I>>("COROUTINE_HANDLER_" + Math.random()),
+        noinline requestHandler: (suspend NettyScope<I>.() -> Unit)? = null) =
+        NettyCoroutineHandler(I::class.java, dispatcher, attribute, requestHandler)
+
+
 class NettyCoroutineHandler<I>(cls: Class<I>,
                                private val dispatcher: CoroutineDispatcher = DefaultDispatcher,
                                private val attribute: AttributeKey<NettyScope<I>> = AttributeKey.newInstance<NettyScope<I>>("COROUTINE_HANDLER_" + Math.random()),

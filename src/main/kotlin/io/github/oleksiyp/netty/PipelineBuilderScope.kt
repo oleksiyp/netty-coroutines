@@ -1,6 +1,5 @@
 package io.github.oleksiyp.netty
 
-import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelPipeline
@@ -23,15 +22,9 @@ class ServerPipelineBuilderScope(pipeline: ChannelPipeline,
                                  nettyDispatcher: CoroutineDispatcher) : PipelineBuilderScope(pipeline, nettyDispatcher) {
 
 
-    fun <I> ChannelPipeline.addCoroutineHandler(cls: Class<I>,
-                                                dispatcher: CoroutineDispatcher = DefaultDispatcher,
-                                                requestHandler: suspend NettyScope<I>.() -> Unit) {
-        addLast(NettyCoroutineHandler(cls, dispatcher, requestHandler = requestHandler))
-    }
-
-    fun ChannelPipeline.addCoroutineHandler(dispatcher: CoroutineDispatcher = DefaultDispatcher,
-                                            requestHandler: suspend NettyScope<ByteBuf>.() -> Unit) {
-        addCoroutineHandler(ByteBuf::class.java, dispatcher, requestHandler)
+    inline fun <reified I> ChannelPipeline.addCoroutineHandler(dispatcher: CoroutineDispatcher = DefaultDispatcher,
+                                                               noinline requestHandler: suspend NettyScope<I>.() -> Unit) {
+        addLast(NettyCoroutineHandler(dispatcher, requestHandler = requestHandler))
     }
 
     fun ChannelPipeline.addServerHttpCodec(aggregationSize: Int = 512 * 1024) {
@@ -57,7 +50,7 @@ class ServerPipelineBuilderScope(pipeline: ChannelPipeline,
 
     fun ChannelPipeline.addServerHttpHandler(dispatcher: CoroutineDispatcher = DefaultDispatcher,
                                              requestHandler: suspend RequestHttpHandlerScope.() -> Unit) {
-        addCoroutineHandler(HttpRequest::class.java, dispatcher = dispatcher) {
+        addCoroutineHandler<HttpRequest>(dispatcher = dispatcher) {
             while (isActive) {
                 val request = receive()
                 val requestHttp = RequestHttpHandlerScope(request, internal)

@@ -4,10 +4,10 @@ import io.github.oleksiyp.netty.DefaultNettyController
 import io.github.oleksiyp.netty.RequestHttpHandlerScope
 import io.github.oleksiyp.netty.WebSocketHandlerScope
 import io.github.oleksiyp.netty.route
-import io.github.oleksiyp.proxy.service.Proxy
+import io.github.oleksiyp.proxy.service.ProxyOps
 import kotlinx.coroutines.experimental.runBlocking
 
-class ProxyController(val proxyOps: Proxy) : DefaultNettyController() {
+class ProxyController(val proxyOps: ProxyOps) : DefaultNettyController() {
     override val httpHandler: suspend RequestHttpHandlerScope.() -> Unit = {
         route("/proxy/listen/(.+)") {
             val listenPort = regexGroups[1].toInt()

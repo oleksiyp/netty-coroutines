@@ -3,12 +3,12 @@ package io.github.oleksiyp.proxy
 import io.github.oleksiyp.netty.NettyServer
 import io.github.oleksiyp.proxy.controller.AboutController
 import io.github.oleksiyp.proxy.controller.ProxyController
-import io.github.oleksiyp.proxy.service.ProxyImplementation
+import io.github.oleksiyp.proxy.service.ProxyOpsImpl
 import io.netty.handler.codec.http.HttpResponseStatus
 
 
 class ProxyApp {
-    private val proxyOps = ProxyImplementation()
+    private val proxyOps = ProxyOpsImpl()
     private val controller = ProxyController(proxyOps) + AboutController()
 
     init {
