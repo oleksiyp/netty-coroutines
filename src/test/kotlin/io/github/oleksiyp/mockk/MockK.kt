@@ -1,6 +1,5 @@
 package io.github.oleksiyp.mockk
 
-import io.github.oleksiyp.mockk.MockK.Companion.anyValue
 import javassist.ClassPool
 import javassist.CtClass
 import javassist.CtMethod
@@ -21,12 +20,16 @@ import kotlin.coroutines.experimental.Continuation
 
 // ---------------------------- USER FACING --------------------------------
 
-inline fun <reified T> mockk(): T = MockK.mockk(T::class.java)
+interface MockK
 
-class EqMatcher<T>(val value: T) : Matcher<T> {
+fun MockK(value: Any) = value as MockK
+
+inline fun <reified T> mockk(): T = MockKGateway.mockk(T::class.java)
+
+class EqMatcher<T>(private val value: T) : Matcher<T> {
     override fun match(arg: T): Boolean = arg == value
 
-    override fun toString(): String = "eq(" + MockK.toString(value) + ")"
+    override fun toString(): String = "eq(" + MockKGateway.toString(value) + ")"
 }
 
 class ConstantMatcher<T>(private val value: Boolean) : Matcher<T> {
@@ -35,43 +38,64 @@ class ConstantMatcher<T>(private val value: Boolean) : Matcher<T> {
     override fun toString(): String = if (value) "any()" else "none()"
 }
 
-fun <T> on(mockBlock: suspend MockKScope.() -> T): OngoingStubbing<T> {
-    MockK.LOCATOR().callRecorder.startRecording()
+class LambdaMatcher<T>(private val matcher: (T) -> Boolean) : Matcher<T> {
+    override fun match(arg: T): Boolean = matcher(arg)
+
+    override fun toString(): String = "lambda()"
+}
+
+
+fun <T> every(mockBlock: suspend MockKScope.() -> T): MockKAnswerScope<T> {
+    val callRecorder = MockKGateway.LOCATOR().callRecorder
+    callRecorder.startRecording()
     runBlocking {
         MockKScope().mockBlock()
     }
-    return OngoingStubbing()
+    return MockKAnswerScope()
 }
 
 fun <T> verify(mockBlock: suspend MockKScope.() -> T): Unit {
-    MockK.LOCATOR().callRecorder.startVerification()
+    MockKGateway.LOCATOR().callRecorder.startVerification()
     runBlocking {
         MockKScope().mockBlock()
     }
-    MockK.LOCATOR().callRecorder.verify()
+    MockKGateway.LOCATOR().callRecorder.verify()
 }
 
 class MockKScope {
-    inline fun <reified T> eq(value: T): T = MockK.eq(value)
-    inline fun <reified T> any(): T = MockK.any()
+    inline fun <reified T> match(noinline matcher: (T) -> Boolean): T = MockKGateway.matcherInCall(LambdaMatcher(matcher))
+    inline fun <reified T> match(matcher: Matcher<T>): T = MockKGateway.matcherInCall(matcher)
+    inline fun <reified T> eq(value: T): T = match(EqMatcher(value))
+    inline fun <reified T> any(): T = match(ConstantMatcher(true))
 }
 
-class OngoingStubbing<T> {
-    infix fun doReturn(returnValue: T?) {
-        MockK.LOCATOR().callRecorder.answer(ConstantAnswer(returnValue))
+
+class MockKAnswerScope<T> {
+    infix fun returns(returnValue: T?) {
+        answers(ConstantAnswer(returnValue))
+    }
+
+    infix fun answers(answer: Answer<T?>) {
+        MockKGateway.LOCATOR().callRecorder.answer(answer)
+    }
+
+    infix fun answers(answer: (Invocation) -> T?) {
+        answers(object : Answer<T?> {
+            override fun answer(invocation: Invocation): T? = answer(invocation)
+        })
     }
 }
 
 // ---------------------------- INTERFACES --------------------------------
-interface MockK {
+interface MockKGateway {
 
     val callRecorder: CallRecorder
 
     val valueGenerator: ValueGenerator
 
     companion object {
-        val defaultImpl = MockKImpl()
-        var LOCATOR: () -> MockK = { defaultImpl }
+        val defaultImpl = MockKGatewayImpl()
+        var LOCATOR: () -> MockKGateway = { defaultImpl }
 
         private val NO_ARGS_TYPE = Class.forName("\$NoArgsConstructorParamType")
 
@@ -84,15 +108,16 @@ interface MockK {
             } else {
                 factory.interfaces = arrayOf(MockKInstance::class.java)
                 factory.superclass = cls
-                factory.create(arrayOf(MockK.NO_ARGS_TYPE), arrayOf<Any?>(null))
+                factory.create(arrayOf(MockKGateway.NO_ARGS_TYPE), arrayOf<Any?>(null))
             }
-            (obj as ProxyObject).handler = MockKHandler(cls, obj)
+            (obj as ProxyObject).handler = MockKInstanceProxyHandler(cls, obj)
             return cls.cast(obj)
         }
 
 
         fun anyValue(type: Class<*>, block: () -> Any? = { Instantiator().instantiate(type) }): Any? {
             return when (type) {
+                Void.TYPE -> Unit
                 Boolean::class.java -> false
                 Byte::class.java -> 0.toByte()
                 Short::class.java -> 0.toShort()
@@ -107,15 +132,9 @@ interface MockK {
 
         }
 
-        inline fun <reified T> eq(value: T): T {
-            val mockK = MockK.LOCATOR()
-            mockK.callRecorder.addMatcher(EqMatcher(value))
-            return mockK.valueGenerator.nextValue(T::class.java)
-        }
-
-        inline fun <reified T> any(): T {
-            val mockK = MockK.LOCATOR()
-            mockK.callRecorder.addMatcher(ConstantMatcher<T>(true))
+        inline fun <reified T> matcherInCall(matcher: Matcher<T>): T {
+            val mockK = MockKGateway.LOCATOR()
+            mockK.callRecorder.addMatcher(matcher)
             return mockK.valueGenerator.nextValue(T::class.java)
         }
 
@@ -129,6 +148,7 @@ interface MockK {
 
         fun Method.toStr() =
                 name + "(" + parameterTypes.map { it.simpleName }.joinToString() + ")"
+
     }
 }
 
@@ -160,7 +180,7 @@ data class Invocation(val self: MockKInstance,
                       val method: Method,
                       val args: List<Any>) {
     override fun toString(): String {
-        return "Invocation(self=$self, method=${MockK.toString(method)}, args=$args)"
+        return "Invocation(self=$self, method=${MockKGateway.toString(method)}, args=$args)"
     }
 }
 
@@ -197,7 +217,7 @@ interface Answer<T> {
     fun answer(invocation: Invocation): T
 }
 
-interface MockKInstance {
+interface MockKInstance : MockK {
     fun ___type(): Class<*>
 
     fun ___addAnswer(matcher: InvocationMatcher, answer: Answer<*>)
@@ -205,16 +225,10 @@ interface MockKInstance {
     fun ___findAnswer(invocation: Invocation): Answer<*>
 
     fun ___childMockK(invocation: Invocation): MockKInstance
-
-    override fun toString(): String
-
-    override fun equals(other: Any?): Boolean
-
-    override fun hashCode(): Int
 }
 
-class MockKHandler(private val cls: Class<*>,
-                   private val obj: Any) : MethodHandler, MockKInstance {
+class MockKInstanceProxyHandler(private val cls: Class<*>,
+                                private val obj: Any) : MethodHandler, MockKInstance {
     private val answers = synchronizedList(mutableListOf<Pair<InvocationMatcher, Answer<*>>>())
     private val mocks = synchronizedMap(hashMapOf<Invocation, MockKInstance>())
 
@@ -226,7 +240,7 @@ class MockKHandler(private val cls: Class<*>,
     override fun ___findAnswer(invocation: Invocation): Answer<*> {
         return synchronized(answers) {
             answers.firstOrNull { it.first.match(invocation) }?.second
-                    ?: ConstantAnswer(anyValue(invocation.method.returnType) {
+                    ?: ConstantAnswer(MockKGateway.anyValue(invocation.method.returnType) {
                 ___childMockK(invocation)
             })
         }
@@ -246,7 +260,7 @@ class MockKHandler(private val cls: Class<*>,
 
     override fun ___childMockK(invocation: Invocation): MockKInstance {
         return mocks.computeIfAbsent(invocation, {
-            MockK.mockk(invocation.method.returnType) as MockKInstance
+            MockKGateway.mockk(invocation.method.returnType) as MockKInstance
         })
     }
 
@@ -261,7 +275,7 @@ class MockKHandler(private val cls: Class<*>,
 
         val argList = args.toList()
         val invocation = Invocation(self as MockKInstance, thisMethod, argList)
-        return MockK.LOCATOR().callRecorder.addCall(invocation)
+        return MockKGateway.LOCATOR().callRecorder.addCall(invocation)
     }
 
     private fun findDeclaredMethod(obj: Any,
@@ -283,7 +297,7 @@ data class ConstantAnswer<T>(val constantValue: T?) : Answer<T?> {
     }
 }
 
-class MockKImpl : MockK {
+class MockKGatewayImpl : MockKGateway {
     val valueGeneratorTL = ThreadLocal.withInitial { ValueGeneratorImpl() }
 
     override val valueGenerator: ValueGenerator
@@ -427,7 +441,7 @@ class MockKImpl : MockK {
             valueGenerator.end()
             matchers.clear()
 
-            return anyValue(invocation.method.returnType) {
+            return MockKGateway.anyValue(invocation.method.returnType) {
                 invocation.self.___childMockK(invocation)
             }
         }

@@ -1,8 +1,8 @@
 package io.github.oleksiyp.proxy.controller
 
 import io.github.oleksiyp.mockk.MockKJUnitRunner
+import io.github.oleksiyp.mockk.every
 import io.github.oleksiyp.mockk.mockk
-import io.github.oleksiyp.mockk.on
 import io.github.oleksiyp.mockk.verify
 import io.github.oleksiyp.netty.RequestHttpHandlerScope
 import io.github.oleksiyp.proxy.service.ProxyOps
@@ -20,12 +20,10 @@ class ProxyControllerTest : StringSpec() {
 
 
         "httpHandler for /proxy/PORT/log should return response" {
-            on { scope.params.path() } doReturn "/proxy/555/log"
-            on { scope.request.method() } doReturn HttpMethod.GET
-
+            every { scope.params.path() } returns "/proxy/555/log"
+            every { scope.request.method() } returns HttpMethod.GET
             runBlocking {
                 controller.httpHandler(scope)
-
             }
             verify {
                 scope.response("<html>\n" +
