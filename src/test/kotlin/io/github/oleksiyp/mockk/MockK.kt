@@ -41,7 +41,7 @@ class ConstantMatcher<T>(private val value: Boolean) : Matcher<T> {
 class LambdaMatcher<T>(private val matcher: (T) -> Boolean) : Matcher<T> {
     override fun match(arg: T): Boolean = matcher(arg)
 
-    override fun toString(): String = "lambda()"
+    override fun toString(): String = "matcher()"
 }
 
 
@@ -63,8 +63,8 @@ fun <T> verify(mockBlock: suspend MockKScope.() -> T): Unit {
 }
 
 class MockKScope {
-    inline fun <reified T> match(noinline matcher: (T) -> Boolean): T = MockKGateway.matcherInCall(LambdaMatcher(matcher))
     inline fun <reified T> match(matcher: Matcher<T>): T = MockKGateway.matcherInCall(matcher)
+    inline fun <reified T> match(noinline matcher: (T) -> Boolean): T = match(LambdaMatcher(matcher))
     inline fun <reified T> eq(value: T): T = match(EqMatcher(value))
     inline fun <reified T> any(): T = match(ConstantMatcher(true))
 }
@@ -157,9 +157,12 @@ interface ValueGenerator {
 
     fun <T> nextValue(cls: Class<T>): T
 
+    fun booleanSpecialCase(nBoolean: Int): Int?
+
     fun nTh(value: Any): Int?
 
     fun end()
+
 }
 
 interface CallRecorder {
@@ -325,9 +328,11 @@ class MockKGatewayImpl : MockKGateway {
     }
 
     inner class ValueGeneratorImpl : ValueGenerator {
-        val vals = hashMapOf<Wrapper, Int>()
+        val refs = hashMapOf<Wrapper, Int>()
+        val vals = hashMapOf<Any, Int>()
 
         var nTotal = 0
+        var nBooleans = 0
         var nBytes = 0.toByte()
         var nShorts = 0.toShort()
         var nInts = 0
@@ -339,6 +344,7 @@ class MockKGatewayImpl : MockKGateway {
         fun reset() {
             vals.clear()
             nTotal = 0
+            nBooleans = 0
             nBytes = 0
             nShorts = 0
             nInts = 0
@@ -350,6 +356,21 @@ class MockKGatewayImpl : MockKGateway {
 
         override fun start() {
             reset()
+        }
+
+        fun checkByValue(cls: Class<*>): Boolean {
+            return when(cls) {
+                Boolean::class.java -> true
+                Byte::class.java -> true
+                Short::class.java -> true
+                Int::class.java -> true
+                Long::class.java -> true
+                Float::class.java -> true
+                Double::class.java -> true
+                String::class.java -> true
+                Object::class.java -> true
+                else -> false
+            }
         }
 
         override fun <T> nextValue(cls: Class<T>): T {
@@ -366,12 +387,24 @@ class MockKGatewayImpl : MockKGateway {
                 else -> Instantiator().instantiate(cls)
             }
 
-            vals.put(Wrapper(value), nTotal++)
+            if (cls == java.lang.Boolean.TYPE) {
+                vals.put(Wrapper("boolean" + nBooleans++), nTotal++)
+            } else if (checkByValue(cls)) {
+                vals.put(value, nTotal++)
+            } else {
+                refs.put(Wrapper(value), nTotal++)
+            }
             return cls.cast(value)
         }
 
+        override fun booleanSpecialCase(nBoolean: Int): Int? = vals[Wrapper("boolean" + nBoolean)]
+
         override fun nTh(value: Any): Int? {
-            return vals[Wrapper(value)]
+            if (checkByValue(value.javaClass)) {
+                return vals[value]
+            } else {
+                return refs[Wrapper(value)]
+            }
         }
 
         override fun end() {
@@ -419,8 +452,13 @@ class MockKGatewayImpl : MockKGateway {
         }
 
         private fun addMatchedCall(invocation: Invocation): Any? {
+            var nBoolean = 0
             val argMatchers = invocation.args.map {
-                val n = valueGenerator.nTh(it)
+                val n = if (it.javaClass == java.lang.Boolean.TYPE) {
+                    valueGenerator.booleanSpecialCase(nBoolean)
+                } else {
+                    valueGenerator.nTh(it)
+                }
                 if (n != null) {
                     matchers.get(n)
                 } else {

@@ -8,6 +8,7 @@ import io.github.oleksiyp.netty.RequestHttpHandlerScope
 import io.github.oleksiyp.proxy.service.ProxyOps
 import io.kotlintest.specs.StringSpec
 import io.netty.handler.codec.http.HttpMethod
+import io.netty.handler.codec.http.HttpResponseStatus
 import kotlinx.coroutines.experimental.runBlocking
 import org.junit.runner.RunWith
 
@@ -18,41 +19,19 @@ class ProxyControllerTest : StringSpec() {
         val scope = mockk<RequestHttpHandlerScope>()
         val controller = ProxyController(ops)
 
-
         "httpHandler for /proxy/PORT/log should return response" {
             every { scope.params.path() } returns "/proxy/555/log"
             every { scope.request.method() } returns HttpMethod.GET
+
             runBlocking {
                 controller.httpHandler(scope)
             }
+
             verify {
-                scope.response("<html>\n" +
-                        "   <head>\n" +
-                        "   <script>\n" +
-                        "       function append(text) {\n" +
-                        "           var log = document.getElementById(\"log\")\n" +
-                        "           log.appendChild(document.createTextNode(text));\n" +
-                        "           log.appendChild(document.createElement(\"br\"));\n" +
-                        "           window.scrollBy(0, log.scrollHeight);\n" +
-                        "       }\n" +
-                        "       var protocolPrefix = (window.location.protocol === 'https:') ? 'wss:' : 'ws:';\n" +
-                        "       var connection = new WebSocket(protocolPrefix + '//' + location.host + '/proxy/555/log');\n" +
-                        "       connection.onerror = function (error) {\n" +
-                        "           console.log('WebSocket Error', error);\n" +
-                        "       };\n" +
-                        "       connection.onmessage = function (e) {\n" +
-                        "           append(e.data)\n" +
-                        "       };\n" +
-                        "       connection.onclose = function(event) {\n" +
-                        "           append(\"CLOSED\")\n" +
-                        "       }\n" +
-                        "\n" +
-                        "   </script>\n" +
-                        "   </head>\n" +
-                        "   <body>\n" +
-                        "       <pre id=\"log\" />\n" +
-                        "   </body>\n" +
-                        "</html>")
+                scope.response(match {
+                    it.startsWith("<html>") &&
+                            it.contains("/proxy/555/log")
+                }, status = HttpResponseStatus.OK)
             }
         }
     }
