@@ -18,14 +18,17 @@ class ProxyControllerTest : StringSpec() {
         val scope = mockk<RequestHttpHandlerScope>()
         val controller = ProxyController(ops)
 
-        on { scope.params.path() } doReturn "/proxy/555/log"
-        on { scope.request.method() } doReturn HttpMethod.GET
 
-        "bla bla" {
+        "httpHandler for /proxy/PORT/log should return response" {
+            on { scope.params.path() } doReturn "/proxy/555/log"
+            on { scope.request.method() } doReturn HttpMethod.GET
+
             runBlocking {
                 controller.httpHandler(scope)
 
-                verify { scope.response("<html>\n" +
+            }
+            verify {
+                scope.response("<html>\n" +
                         "   <head>\n" +
                         "   <script>\n" +
                         "       function append(text) {\n" +
@@ -51,7 +54,7 @@ class ProxyControllerTest : StringSpec() {
                         "   <body>\n" +
                         "       <pre id=\"log\" />\n" +
                         "   </body>\n" +
-                        "</html>") }
+                        "</html>")
             }
         }
     }

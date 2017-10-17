@@ -1,14 +1,23 @@
 package io.github.oleksiyp.mockk
 
 import io.github.oleksiyp.mockk.MockK.Companion.anyValue
+import javassist.ClassPool
+import javassist.CtClass
+import javassist.CtMethod
+import javassist.Modifier
+import javassist.bytecode.Bytecode
+import javassist.bytecode.ClassFile
+import javassist.util.proxy.MethodFilter
 import javassist.util.proxy.MethodHandler
 import javassist.util.proxy.ProxyFactory
 import javassist.util.proxy.ProxyObject
 import kotlinx.coroutines.experimental.runBlocking
 import java.lang.reflect.Method
+import java.nio.charset.Charset
 import java.util.*
 import java.util.Collections.synchronizedList
 import java.util.Collections.synchronizedMap
+import kotlin.coroutines.experimental.Continuation
 
 // ---------------------------- USER FACING --------------------------------
 
@@ -43,8 +52,8 @@ fun <T> verify(mockBlock: suspend MockKScope.() -> T): Unit {
 }
 
 class MockKScope {
-    inline fun <reified T> eq(value: T): T? = MockK.eq(value)
-    inline fun <reified T> any(): T? = MockK.any()
+    inline fun <reified T> eq(value: T): T = MockK.eq(value)
+    inline fun <reified T> any(): T = MockK.any()
 }
 
 class OngoingStubbing<T> {
@@ -55,6 +64,11 @@ class OngoingStubbing<T> {
 
 // ---------------------------- INTERFACES --------------------------------
 interface MockK {
+
+    val callRecorder: CallRecorder
+
+    val valueGenerator: ValueGenerator
+
     companion object {
         val defaultImpl = MockKImpl()
         var LOCATOR: () -> MockK = { defaultImpl }
@@ -76,7 +90,8 @@ interface MockK {
             return cls.cast(obj)
         }
 
-        fun anyValue(type: Class<*>, block: () -> Any?): Any? {
+
+        fun anyValue(type: Class<*>, block: () -> Any? = { Instantiator().instantiate(type) }): Any? {
             return when (type) {
                 Boolean::class.java -> false
                 Byte::class.java -> 0.toByte()
@@ -86,33 +101,45 @@ interface MockK {
                 Float::class.java -> 0.0F
                 Double::class.java -> 0.0
                 String::class.java -> ""
-                Object::class.java -> ""
+                Object::class.java -> Object()
                 else -> block()
             }
 
         }
 
-        inline fun <reified T> eq(value: T): T? {
-            MockK.LOCATOR().callRecorder.addMatcher(EqMatcher(value))
-            return MockK.anyValue(T::class.java) { null } as T?
+        inline fun <reified T> eq(value: T): T {
+            val mockK = MockK.LOCATOR()
+            mockK.callRecorder.addMatcher(EqMatcher(value))
+            return mockK.valueGenerator.nextValue(T::class.java)
         }
 
-        inline fun <reified T> any(): T? {
-            MockK.LOCATOR().callRecorder.addMatcher(ConstantMatcher<T>(true))
-            return MockK.anyValue(T::class.java) { null } as T?
+        inline fun <reified T> any(): T {
+            val mockK = MockK.LOCATOR()
+            mockK.callRecorder.addMatcher(ConstantMatcher<T>(true))
+            return mockK.valueGenerator.nextValue(T::class.java)
         }
 
-        fun toString(obj: Any?) : String {
+        fun toString(obj: Any?): String {
             if (obj == null)
                 return "null"
             if (obj is Method)
-                return obj.name + "(" + obj.parameterTypes.map { it.simpleName }.joinToString() + ")"
+                return obj.toStr()
             return obj.toString()
         }
+
+        fun Method.toStr() =
+                name + "(" + parameterTypes.map { it.simpleName }.joinToString() + ")"
     }
+}
 
-    val callRecorder: CallRecorder
+interface ValueGenerator {
+    fun start()
 
+    fun <T> nextValue(cls: Class<T>): T
+
+    fun nTh(value: Any): Int?
+
+    fun end()
 }
 
 interface CallRecorder {
@@ -125,6 +152,7 @@ interface CallRecorder {
     fun addCall(invocation: Invocation): Any?
 
     fun answer(answer: Answer<*>)
+
     fun verify()
 }
 
@@ -170,19 +198,19 @@ interface Answer<T> {
 }
 
 interface MockKInstance {
-    fun type(): Class<*>
+    fun ___type(): Class<*>
 
-    fun addAnswer(matcher: InvocationMatcher, answer: Answer<*>)
+    fun ___addAnswer(matcher: InvocationMatcher, answer: Answer<*>)
 
-    fun findAnswer(invocation: Invocation): Answer<*>
+    fun ___findAnswer(invocation: Invocation): Answer<*>
+
+    fun ___childMockK(invocation: Invocation): MockKInstance
 
     override fun toString(): String
 
     override fun equals(other: Any?): Boolean
 
     override fun hashCode(): Int
-
-    fun childMockK(invocation: Invocation): MockKInstance
 }
 
 class MockKHandler(private val cls: Class<*>,
@@ -190,21 +218,23 @@ class MockKHandler(private val cls: Class<*>,
     private val answers = synchronizedList(mutableListOf<Pair<InvocationMatcher, Answer<*>>>())
     private val mocks = synchronizedMap(hashMapOf<Invocation, MockKInstance>())
 
-    override fun addAnswer(matcher: InvocationMatcher, answer: Answer<*>) {
-        println(matcher.toString() + " " + answer)
+    override fun ___addAnswer(matcher: InvocationMatcher, answer: Answer<*>) {
+        println(matcher.toString() + " -> " + answer)
         answers.add(Pair(matcher, answer))
     }
 
-    override fun findAnswer(invocation: Invocation): Answer<*> {
+    override fun ___findAnswer(invocation: Invocation): Answer<*> {
         return synchronized(answers) {
             answers.firstOrNull { it.first.match(invocation) }?.second
-                    ?: ConstantAnswer(anyValue(invocation.method.returnType) { null })
+                    ?: ConstantAnswer(anyValue(invocation.method.returnType) {
+                ___childMockK(invocation)
+            })
         }
     }
 
-    override fun type(): Class<*> = cls
+    override fun ___type(): Class<*> = cls
 
-    override fun toString() = "mockk<" + type().simpleName + ">()"
+    override fun toString() = "mockk<" + ___type().simpleName + ">()"
 
     override fun equals(other: Any?): Boolean {
         return obj === other
@@ -214,7 +244,7 @@ class MockKHandler(private val cls: Class<*>,
         return System.identityHashCode(obj)
     }
 
-    override fun childMockK(invocation: Invocation): MockKInstance {
+    override fun ___childMockK(invocation: Invocation): MockKInstance {
         return mocks.computeIfAbsent(invocation, {
             MockK.mockk(invocation.method.returnType) as MockKInstance
         })
@@ -247,9 +277,94 @@ class MockKHandler(private val cls: Class<*>,
 
 data class ConstantAnswer<T>(val constantValue: T?) : Answer<T?> {
     override fun answer(invocation: Invocation) = constantValue
+
+    override fun toString(): String {
+        return "const($constantValue)"
+    }
 }
 
 class MockKImpl : MockK {
+    val valueGeneratorTL = ThreadLocal.withInitial { ValueGeneratorImpl() }
+
+    override val valueGenerator: ValueGenerator
+        get() = valueGeneratorTL.get()
+
+    class Wrapper(val value: Any) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+
+            other as Wrapper
+
+            if (value !== other.value) return false
+
+            return true
+        }
+
+        override fun hashCode(): Int {
+            return System.identityHashCode(value)
+        }
+
+        override fun toString(): String {
+            return value.javaClass.simpleName + "@" + hashCode()
+        }
+    }
+
+    inner class ValueGeneratorImpl : ValueGenerator {
+        val vals = hashMapOf<Wrapper, Int>()
+
+        var nTotal = 0
+        var nBytes = 0.toByte()
+        var nShorts = 0.toShort()
+        var nInts = 0
+        var nLongs = 0L
+        var nDoubles = 0.0
+        var nFloats = 0.0f
+        var nStrings = 0
+
+        fun reset() {
+            vals.clear()
+            nTotal = 0
+            nBytes = 0
+            nShorts = 0
+            nInts = 0
+            nLongs = 0
+            nDoubles = 0.0
+            nFloats = 0.0f
+            nStrings = 0
+        }
+
+        override fun start() {
+            reset()
+        }
+
+        override fun <T> nextValue(cls: Class<T>): T {
+            val value = when (cls) {
+                Boolean::class.java -> java.lang.Boolean(true)
+                Byte::class.java -> java.lang.Byte(nBytes++)
+                Short::class.java -> java.lang.Short(nShorts++)
+                Int::class.java -> java.lang.Integer(nInts++)
+                Long::class.java -> java.lang.Long(nLongs++)
+                Float::class.java -> java.lang.Float(nFloats++)
+                Double::class.java -> java.lang.Double(nDoubles++)
+                String::class.java -> java.lang.String(nStrings++.toString())
+                Object::class.java -> java.lang.Object()
+                else -> Instantiator().instantiate(cls)
+            }
+
+            vals.put(Wrapper(value), nTotal++)
+            return cls.cast(value)
+        }
+
+        override fun nTh(value: Any): Int? {
+            return vals[Wrapper(value)]
+        }
+
+        override fun end() {
+            reset()
+        }
+    }
+
     val callRecorderTL = ThreadLocal.withInitial { CallRecorderImpl() }
     override val callRecorder: CallRecorder
         get() = callRecorderTL.get()
@@ -266,10 +381,12 @@ class MockKImpl : MockK {
         var verificationLevel = -1
 
         override fun startRecording() {
+            valueGenerator.start()
             recordingLevel = matchedCalls.size
         }
 
         override fun startVerification() {
+            valueGenerator.start()
             verificationLevel = matchedCalls.size
         }
 
@@ -282,25 +399,36 @@ class MockKImpl : MockK {
                 return addMatchedCall(invocation)
             } else {
                 calls.add(invocation)
-                return invocation.self.findAnswer(invocation).answer(invocation)
+                return invocation.self.___findAnswer(invocation).answer(invocation)
             }
 
         }
 
         private fun addMatchedCall(invocation: Invocation): Any? {
-            if (matchers.size == 0) {
-                matchers.addAll(invocation.args.map { EqMatcher(it) })
-            }
-            if (matchers.size != invocation.method.parameterCount) {
-                throw RuntimeException("wrong matchers count")
+            val argMatchers = invocation.args.map {
+                val n = valueGenerator.nTh(it)
+                if (n != null) {
+                    matchers.get(n)
+                } else {
+                    EqMatcher(it)
+                }
+            }.toMutableList()
+
+            if (invocation.method.isSuspend()) {
+                argMatchers[argMatchers.size - 1] = ConstantMatcher<Any>(true)
             }
 
-            matchedCalls.add(MatchedCall(invocation, matchers.toList()))
+            argMatchers.forEach{
+                println(it)
+            }
 
+            matchedCalls.add(MatchedCall(invocation, argMatchers.toList()))
+
+            valueGenerator.end()
             matchers.clear()
 
             return anyValue(invocation.method.returnType) {
-                invocation.self.childMockK(invocation)
+                invocation.self.___childMockK(invocation)
             }
         }
 
@@ -308,7 +436,7 @@ class MockKImpl : MockK {
             var ans = answer
             while (matchedCalls.size != recordingLevel) {
                 matchedCalls.removeAt(matchedCalls.size - 1).let {
-                    it.invocation.self.addAnswer(
+                    it.invocation.self.___addAnswer(
                             InvocationMatcher(
                                     EqMatcher(it.invocation.self),
                                     EqMatcher(it.invocation.method),
@@ -321,11 +449,11 @@ class MockKImpl : MockK {
         }
 
         override fun verify() {
-            val invokeMatchers = mutableListOf<InvocationMatcher>()
+            val invokeMatcherList = mutableListOf<InvocationMatcher>()
 
             while (matchedCalls.size != verificationLevel) {
                 matchedCalls.removeAt(matchedCalls.size - 1).let {
-                    invokeMatchers.add(InvocationMatcher(
+                    invokeMatcherList.add(InvocationMatcher(
                             EqMatcher(it.invocation.self),
                             EqMatcher(it.invocation.method),
                             it.matchers as List<Matcher<Any>>))
@@ -333,13 +461,14 @@ class MockKImpl : MockK {
             }
 
             for (invocation in calls) {
-                invokeMatchers.removeIf { it.match(invocation) }
+                invokeMatcherList.removeIf { it.match(invocation) }
             }
 
             verificationLevel = -1
 
-            if (!invokeMatchers.isEmpty()) {
-                throw RuntimeException("verification failed")
+            if (!invokeMatcherList.isEmpty()) {
+                throw RuntimeException("verification failed " + invokeMatcherList +
+                        " calls: " + calls)
             }
 
         }
@@ -347,4 +476,102 @@ class MockKImpl : MockK {
 
 }
 
+private fun Method.isSuspend(): Boolean {
+    if (parameterCount == 0) {
+        return false
+    }
+    return Continuation::class.java.isAssignableFrom(parameterTypes[parameterCount - 1])
+}
 
+// ---------------------------- BYTE CODE LEVEL --------------------------------
+
+class Instantiator {
+    val cp = ClassPool.getDefault()
+
+    fun instantiate(cls: Class<*>): Any {
+        val factory = ProxyFactory()
+
+        val makeMethod = factory.javaClass.getDeclaredMethod("make")
+        makeMethod.isAccessible = true
+
+        val computeSignatureMethod = factory.javaClass.getDeclaredMethod("computeSignature",
+                MethodFilter::class.java)
+        computeSignatureMethod.isAccessible = true
+
+        val allocateClassNameMethod = factory.javaClass.getDeclaredMethod("allocateClassName")
+        allocateClassNameMethod.isAccessible = true
+
+        if (cls == Charset::class.java) {
+            println("Charset")
+        }
+
+
+        val proxyClsFile = if (cls.isInterface) {
+            factory.interfaces = arrayOf(cls, MockKInstance::class.java)
+            computeSignatureMethod.invoke(factory, MethodFilter { true })
+            allocateClassNameMethod.invoke(factory)
+            makeMethod.invoke(factory)
+        } else {
+            factory.interfaces = arrayOf(MockKInstance::class.java)
+            factory.superclass = cls
+            computeSignatureMethod.invoke(factory, MethodFilter { true })
+            allocateClassNameMethod.invoke(factory)
+            makeMethod.invoke(factory)
+        } as ClassFile
+
+        val proxyCls = cp.makeClass(proxyClsFile).toClass()
+
+        val name = nameForInstantiator(proxyCls)
+        val instantiatorCls =
+                (cp.getOrNull(name)
+                        ?: buildInstantiator(name, proxyCls)).toClass()
+
+        val instantiator = instantiatorCls.newInstance()
+
+        val instance = instantiatorCls.getMethod("newInstance")
+                .invoke(instantiator)
+
+        (instance as ProxyObject).handler = MethodHandler { self: Any, thisMethod: Method, proceed: Method, args: Array<Any?> ->
+
+            if (thisMethod.name == "hashCode" && thisMethod.parameterCount == 0) {
+                System.identityHashCode(self)
+            } else if (thisMethod.name == "equals" &&
+                    thisMethod.parameterCount == 1 &&
+                    thisMethod.parameterTypes[0] == java.lang.Object::class.java) {
+                self === args[0]
+            } else {
+                null
+            }
+        }
+
+
+        return instance
+    }
+
+    protected fun nameForInstantiator(cls: Class<*>) = "inst." + cls.name + "\$Instantiator"
+
+    private fun buildInstantiator(name: String, cls: Class<*>): CtClass {
+        val instCls = cp.makeClass(name)
+        val ctCls = cp.get(cls.name)
+
+        val newInstanceMethod = CtMethod(ctCls, "newInstance", arrayOf(), instCls)
+        newInstanceMethod.modifiers = Modifier.STATIC or Modifier.PUBLIC
+        newInstanceMethod.exceptionTypes = arrayOf()
+        newInstanceMethod.setBody("return null;")
+
+        val bc = Bytecode(instCls.classFile.constPool)
+
+        bc.addNew(ctCls)
+        bc.addReturn(ctCls)
+
+
+        val methodInfo = newInstanceMethod.methodInfo
+        methodInfo.codeAttribute = bc.toCodeAttribute()
+        methodInfo.rebuildStackMapIf6(cp, instCls.classFile2)
+        ctCls.rebuildClassFile()
+
+        instCls.addMethod(newInstanceMethod)
+
+        return instCls
+    }
+}

@@ -5,24 +5,23 @@ import javassist.CtClass
 import javassist.CtConstructor
 import javassist.bytecode.AccessFlag
 import java.lang.reflect.Modifier
+import java.util.Collections.synchronizedSet
 
-class MockKTranslator {
+class MockKClassTranslator {
     lateinit var noArgsParamType : CtClass
 
     fun start(pool: ClassPool) {
         noArgsParamType = pool.makeClass("\$NoArgsConstructorParamType")
     }
 
-    val load = hashSetOf<String>()
+    val load = synchronizedSet(hashSetOf<String>())
 
     fun onLoad(cls: CtClass) {
-        if (load.contains(cls.name) || cls.isFrozen) {
+        if (!load.add(cls.name) || cls.isFrozen) {
             return
         }
-        load.add(cls.name)
         removeFinal(cls)
         addNoArgsConstructor(cls)
-        load.remove(cls.name)
     }
 
     private fun addNoArgsConstructor(cls: CtClass) {
@@ -80,11 +79,12 @@ class MockKTranslator {
 
     private fun removeFinalOnMethods(clazz: CtClass) {
         clazz.declaredMethods.forEach {
-            if (Modifier.isPublic(it.modifiers) && Modifier.isFinal(it.modifiers)) {
+            if (Modifier.isFinal(it.modifiers)) {
                 it.modifiers = javassist.Modifier.clear(it.modifiers, Modifier.FINAL)
             }
         }
     }
+
 
     private fun removeFinalOnClass(clazz: CtClass) {
         val modifiers = clazz.modifiers

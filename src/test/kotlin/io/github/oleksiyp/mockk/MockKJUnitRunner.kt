@@ -8,8 +8,8 @@ import java.lang.Thread.currentThread
 
 class MockKJUnitRunner(cls: Class<*>) : Runner() {
 
-    val pool = TranslatingClassPool(MockKTranslator())
-    val loader = Loader(currentThread().contextClassLoader, pool)
+    val pool = TranslatingClassPool(MockKClassTranslator())
+    val loader = Loader(pool)
 
     init {
         loader.delegateLoadingOf("org.junit.runner.")
