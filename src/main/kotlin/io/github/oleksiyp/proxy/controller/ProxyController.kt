@@ -1,9 +1,6 @@
 package io.github.oleksiyp.proxy.controller
 
-import io.github.oleksiyp.netty.DefaultNettyController
-import io.github.oleksiyp.netty.RequestHttpHandlerScope
-import io.github.oleksiyp.netty.WebSocketHandlerScope
-import io.github.oleksiyp.netty.route
+import io.github.oleksiyp.netty.*
 import io.github.oleksiyp.proxy.service.ProxyOps
 import kotlinx.coroutines.experimental.runBlocking
 

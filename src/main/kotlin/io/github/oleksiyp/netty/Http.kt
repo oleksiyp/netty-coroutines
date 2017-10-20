@@ -90,9 +90,10 @@ abstract class HttpHandlerScope(internal: Internal<HttpRequest>) : NettyScope<Ht
 
     suspend fun alloc() = internal.channel.alloc()
 
-    fun QueryStringDecoder.firstParam(key: String) = parameters()?.get(key)?.getOrNull(0)
-    fun QueryStringDecoder.firstIntParam(key: String) = firstParam(key)?.toIntOrNull()
 }
+
+fun QueryStringDecoder.firstParam(key: String) = parameters()?.get(key)?.getOrNull(0)
+fun QueryStringDecoder.firstIntParam(key: String) = firstParam(key)?.toIntOrNull()
 
 suspend fun HttpHandlerScope.staticResourcesHandler(path: String, resourcesBase: String) {
     val resource = this.javaClass.classLoader.getResource(resourcesBase + "/" + path)
