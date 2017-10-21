@@ -20,6 +20,15 @@ class ProxyOpsImplTest : StringSpec() {
             verify { ops.newConnection(3333, "host", 5555) }
         }
 
+        "on unlisten proxy ops should get a connection and stop it" {
+            every { ops.getConnection(3333).stop() } answers { nothing }
+
+            runBlocking {
+                ops.unlisten(3333)
+            }
+
+            verify { ops.getConnection(3333).stop() }
+        }
     }
 
 }

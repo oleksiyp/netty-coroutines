@@ -3,7 +3,7 @@ package io.github.oleksiyp.proxy.service
 class ProxyOpsImpl : ProxyOps {
     val connections = mutableListOf<ProxyConnection>()
 
-    fun newConnection(listenPort: Int,
+    internal fun newConnection(listenPort: Int,
                       connectHost: String,
                       connectPort: Int) : ProxyConnection = ProxyConnectionImpl(listenPort, connectHost, connectPort)
 
