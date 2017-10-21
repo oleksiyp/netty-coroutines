@@ -282,7 +282,6 @@ class MockKTestSuite : StringSpec({
         assertEquals(5.0, spy.manyArgsOp(c = 7), 1e-6)
         assertEquals(6.0, spy.manyArgsOp(c = 8, t = IntWrapper(6)), 1e-6)
         assertEquals(20.0, spy.manyArgsOp(c = 9), 1e-6)
-        assertEquals(9.0, spy.manyArgsOp(c = 10), 1e-6)
         assertEquals(20.0, spy.manyArgsOp(c = 11), 1e-6)
         assertEquals(10.0, spy.manyArgsOp(d = 10, c = 12), 1e-6)
         assertEquals(11.0, spy.manyArgsOp(d = 11, c = 12), 1e-6)
@@ -300,7 +299,6 @@ class MockKTestSuite : StringSpec({
         verify { spy.manyArgsOp(c = 7) }
         verify { spy.manyArgsOp(c = 8, t = IntWrapper(6)) }
         verify { spy.manyArgsOp(c = 9) }
-        verify { spy.manyArgsOp(c = 10) }
         verify { spy.manyArgsOp(c = 11) }
         verify { spy.manyArgsOp(d = 10, c = 12) }
         verify { spy.manyArgsOp(d = 11, c = 12) }
