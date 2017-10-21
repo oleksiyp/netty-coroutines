@@ -1,8 +1,8 @@
 package io.github.oleksiyp.proxy.service
 
+import io.kotlintest.experimental.mockk.*
 import io.kotlintest.specs.StringSpec
 import kotlinx.coroutines.experimental.runBlocking
-import mockk.*
 import org.junit.runner.RunWith
 
 @RunWith(MockKJUnitRunner::class)
