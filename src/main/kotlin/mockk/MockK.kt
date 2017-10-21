@@ -44,6 +44,50 @@ import kotlin.String
 import kotlin.coroutines.experimental.Continuation
 import kotlin.with
 
+import javassist.ClassPool
+import javassist.CtClass
+import javassist.CtConstructor
+import javassist.Loader
+import javassist.bytecode.AccessFlag
+import javassist.bytecode.ClassFile
+import javassist.util.proxy.MethodFilter
+import javassist.util.proxy.MethodHandler
+import javassist.util.proxy.ProxyFactory
+import javassist.util.proxy.ProxyObject
+import kotlinx.coroutines.experimental.runBlocking
+import org.junit.runner.Description
+import org.junit.runner.RunWith
+import org.junit.runner.Runner
+import org.junit.runner.notification.RunNotifier
+import org.slf4j.LoggerFactory
+import sun.reflect.ReflectionFactory
+import java.lang.AssertionError
+import java.lang.Class
+import java.lang.ClassNotFoundException
+import java.lang.NoSuchMethodException
+import java.lang.Object
+import java.lang.System
+import java.lang.System.identityHashCode
+import java.lang.Thread
+import java.lang.ThreadLocal
+import java.lang.Void
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
+import java.util.*
+import java.util.Collections.synchronizedList
+import java.util.Collections.synchronizedMap
+import java.util.logging.Level
+import kotlin.Byte
+import kotlin.Double
+import kotlin.Float
+import kotlin.Int
+import kotlin.Long
+import kotlin.RuntimeException
+import kotlin.Short
+import kotlin.String
+import kotlin.coroutines.experimental.Continuation
+import kotlin.with
+
 // ---------------------------- USER FACING --------------------------------
 
 /**
@@ -289,7 +333,7 @@ class MockKAnswerScope(private val gw: MockKGateway,
     inline fun <reified T> firstArg() = invocation.args[0] as T
     inline fun <reified T> secondArg() = invocation.args[1] as T
     inline fun <reified T> thirdArg() = invocation.args[2] as T
-    inline fun <reified T> lastArg() = invocation.args[invocation.args.size - 1] as T
+    inline fun <reified T> lastArg() = invocation.args.last() as T
 
     inline fun <T> MutableList<T>.captured() = last()
 
@@ -893,7 +937,7 @@ private open class MockKInstanceProxyHandler(private val cls: Class<*>,
         return with(invocationAndMatcher) {
             ___captureAnswer(matcher, invocation)
 
-            val call = mockk.Call(invocation.method.returnType,
+            val call = Call(invocation.method.returnType,
                     invocation,
                     matcher, false)
 
@@ -1411,7 +1455,7 @@ private class OrderedVerifierImpl(private val gw: MockKGateway) : Verifier {
         }
 
         // match only if all matchers present
-        return VerificationResult(prev[calls.size - 1] == calls.size)
+        return VerificationResult(prev.last() == calls.size)
     }
 }
 
