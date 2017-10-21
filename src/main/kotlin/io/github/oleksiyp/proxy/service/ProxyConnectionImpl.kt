@@ -12,9 +12,9 @@ import java.io.IOException
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 
-class ProxyConnectionImpl(override val listenPort: Int,
-                          override val connectHost: String,
-                          override val connectPort: Int) : ProxyConnection {
+data class ProxyConnectionImpl(override val listenPort: Int,
+                               override val connectHost: String,
+                               override val connectPort: Int) : ProxyConnection {
 
     private val inbound = AtomicInteger()
     private val outbound = AtomicInteger()

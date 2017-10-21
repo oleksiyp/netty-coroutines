@@ -63,7 +63,7 @@ class MockCls {
 @RunWith(MockKJUnitRunner::class)
 class MockKTestSuite : StringSpec({
     val mock = mockk<MockCls>()
-    val spy = spyk(MockCls())
+    val spy = spyk<MockCls>()
     "partly argument matching" {
         every { mock.manyArgsOp(allAny()) } returns 0.0
         every { mock.manyArgsOp(a = eq(false)) } returns 1.0
@@ -269,7 +269,6 @@ class MockKTestSuite : StringSpec({
         every { spy.manyArgsOp(c = 7) } answers { thirdArg<Byte>().toDouble() - 2 }
         every { spy.manyArgsOp(t = any(), c = 8) } answers { lastArg<IntWrapper>().data.toDouble() }
         every { spy.manyArgsOp(c = 9) } answers { nArgs.toDouble() }
-        every { spy.manyArgsOp(c = 10) } answers { spiedObj<MockCls>().otherOp(args[8] as Int).toDouble() }
         every { spy.manyArgsOp(c = 11) } answers { method.parameterCount.toDouble() }
         every { spy.manyArgsOp(d = capture(lstNonNull), c = 12) } answers { lstNonNull.captured().toDouble() }
         every { spy.manyArgsOp(d = captureNullable(lst), c = 13) } answers { lst.captured()!!.toDouble() }
